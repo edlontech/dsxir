@@ -1,5 +1,9 @@
 spark_locals_without_parens = [
-  predictor: 3
+  predictor: 3,
+  input: 2,
+  output: 2,
+  output: 3,
+  instruction: 1
 ]
 
 [
