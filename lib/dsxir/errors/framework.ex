@@ -5,12 +5,20 @@ end
 
 defmodule Dsxir.Errors.Framework.PredictorError do
   @moduledoc false
-  use Splode.Error, fields: [:predictor, :signature, :inner], class: :framework
-  def message(struct), do: inspect(struct)
+  use Splode.Error,
+    fields: [:predictor, :signature, :inner, :reason, :trajectory],
+    class: :framework
+
+  def message(%{predictor: predictor, signature: signature, inner: inner, reason: reason}) do
+    "framework predictor error: predictor=#{inspect(predictor)} signature=#{inspect(signature)} inner=#{inspect(inner)} reason=#{inspect(reason)}"
+  end
 end
 
 defmodule Dsxir.Errors.Framework.OptimizerError do
   @moduledoc false
   use Splode.Error, fields: [:optimizer, :inner], class: :framework
-  def message(struct), do: inspect(struct)
+
+  def message(%{optimizer: optimizer, inner: inner}) do
+    "framework optimizer error: optimizer=#{inspect(optimizer)} inner=#{inspect(inner)}"
+  end
 end

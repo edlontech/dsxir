@@ -6,5 +6,8 @@ end
 defmodule Dsxir.Errors.Unknown.Unknown do
   @moduledoc false
   use Splode.Error, fields: [:error], class: :unknown
-  def message(struct), do: inspect(struct)
+
+  def message(%{error: error}) do
+    "unknown error: #{inspect(error)}"
+  end
 end

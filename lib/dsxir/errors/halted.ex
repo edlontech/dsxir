@@ -6,5 +6,8 @@ end
 defmodule Dsxir.Errors.Halted.Plug do
   @moduledoc false
   use Splode.Error, fields: [:plug, :reason, :context], class: :halted
-  def message(struct), do: inspect(struct)
+
+  def message(%{plug: plug, reason: reason}) do
+    "halted by plug #{inspect(plug)}: reason=#{inspect(reason)}"
+  end
 end

@@ -31,4 +31,8 @@ defmodule Dsxir.Errors do
       "Dsxir.Adapter.",
       "Dsxir.Predictor."
     ]
+
+  @spec class_of(any()) :: atom()
+  def class_of(%{class: class}) when is_atom(class), do: class
+  def class_of(_), do: :unknown
 end
