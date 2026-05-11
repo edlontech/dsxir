@@ -6,7 +6,7 @@ defmodule Dsxir.Module.PredictorDecl do
   @type t :: %__MODULE__{
           name: atom(),
           impl: module(),
-          signature: module(),
+          signature: module() | Dsxir.Signature.Compiled.t(),
           __spark_metadata__: term()
         }
 end

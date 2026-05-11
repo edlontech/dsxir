@@ -14,7 +14,7 @@ defmodule Dsxir.Module.RuntimeTest do
 
   test "call/4 routes through the declared predictor impl" do
     expect(Dsxir.LM.Sycophant, :generate_text, fn _, _, _ ->
-      {:ok, "[[ ## answer ## ]]\n42"}
+      {:ok, "[[ ## answer ## ]]\n42", Dsxir.LM.empty_usage()}
     end)
 
     Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
@@ -32,5 +32,29 @@ defmodule Dsxir.Module.RuntimeTest do
     assert_raise Dsxir.Errors.Invalid.Module, fn ->
       Dsxir.Module.Runtime.call(prog, name, %{question: "x"})
     end
+  end
+
+  test "call/4 pushes predictor name onto :path in merged opts" do
+    expect(Dsxir.LM.Sycophant, :generate_text, fn _, _, _ ->
+      {:ok, "no markers", Dsxir.LM.empty_usage()}
+    end)
+
+    expect(Dsxir.LM.Sycophant, :generate_object, fn _, _, _, _ ->
+      {:error, %Dsxir.Errors.LM.ContextWindow{model_id: "stub"}}
+    end)
+
+    Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
+      prog = Dsxir.Program.new(AnswerProgram)
+
+      err =
+        try do
+          Dsxir.Module.Runtime.call(prog, :answer, %{question: "x"}, path: [:outer])
+          flunk("expected FallbackExhausted")
+        rescue
+          e in Dsxir.Errors.Adapter.FallbackExhausted -> e
+        end
+
+      assert %Dsxir.Errors.Adapter.FallbackExhausted{path: [:outer, :answer]} = err
+    end)
   end
 end

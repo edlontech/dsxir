@@ -20,7 +20,7 @@ defmodule Dsxir.Predictor.PredictTest do
     """
 
     expect(Dsxir.LM.Sycophant, :generate_text, fn _config, _msgs, _opts ->
-      {:ok, markered}
+      {:ok, markered, Dsxir.LM.empty_usage()}
     end)
 
     Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
@@ -36,7 +36,7 @@ defmodule Dsxir.Predictor.PredictTest do
 
   test "forward/4 emits start/stop telemetry with predictor metadata" do
     expect(Dsxir.LM.Sycophant, :generate_text, fn _, _, _ ->
-      {:ok, "[[ ## answer ## ]]\nx"}
+      {:ok, "[[ ## answer ## ]]\nx", %{tokens_in: nil, tokens_out: nil, cost: nil}}
     end)
 
     parent = self()
@@ -69,9 +69,62 @@ defmodule Dsxir.Predictor.PredictTest do
                     %{prediction: %Dsxir.Prediction{}, error_class: nil}}
   end
 
+  test "forward/4 stop event always carries tokens_in/tokens_out/cost measurements" do
+    expect(Dsxir.LM.Sycophant, :generate_text, fn _, _, _ ->
+      {:ok, "[[ ## answer ## ]]\nx", %{tokens_in: 12, tokens_out: 34, cost: 0.0005}}
+    end)
+
+    parent = self()
+    handler_id = {__MODULE__, :token_handler}
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    :telemetry.attach(
+      handler_id,
+      Dsxir.Telemetry.predictor_stop(),
+      fn _e, meas, _meta, _ -> send(parent, {:telemetry_stop, meas}) end,
+      nil
+    )
+
+    Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
+      Predict.forward(%Dsxir.Program.State{}, AnswerQuestion, %{question: "x"}, [])
+    end)
+
+    assert_receive {:telemetry_stop, %{duration: _, tokens_in: 12, tokens_out: 34, cost: 0.0005}}
+  end
+
+  test "forward/4 stop event carries nil token measurements when LM returns empty usage" do
+    expect(Dsxir.LM.Sycophant, :generate_text, fn _, _, _ ->
+      {:ok, "[[ ## answer ## ]]\nx", %{tokens_in: nil, tokens_out: nil, cost: nil}}
+    end)
+
+    parent = self()
+    handler_id = {__MODULE__, :nil_token_handler}
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    :telemetry.attach(
+      handler_id,
+      Dsxir.Telemetry.predictor_stop(),
+      fn _e, meas, _meta, _ -> send(parent, {:telemetry_stop, meas}) end,
+      nil
+    )
+
+    Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
+      Predict.forward(%Dsxir.Program.State{}, AnswerQuestion, %{question: "x"}, [])
+    end)
+
+    assert_receive {:telemetry_stop,
+                    %{duration: _, tokens_in: nil, tokens_out: nil, cost: nil} = meas}
+
+    assert Map.has_key?(meas, :tokens_in)
+    assert Map.has_key?(meas, :tokens_out)
+    assert Map.has_key?(meas, :cost)
+  end
+
   test "forward/4 propagates settings.metadata into telemetry" do
     expect(Dsxir.LM.Sycophant, :generate_text, fn _, _, _ ->
-      {:ok, "[[ ## answer ## ]]\ny"}
+      {:ok, "[[ ## answer ## ]]\ny", Dsxir.LM.empty_usage()}
     end)
 
     parent = self()
@@ -99,18 +152,26 @@ defmodule Dsxir.Predictor.PredictTest do
     assert_receive {:telemetry, %{tenant_id: "t1"}}
   end
 
-  test "forward/4 raises Adapter.ParseError when LM output has no markers" do
-    expect(Dsxir.LM.Sycophant, :generate_text, fn _, _, _ -> {:ok, "no markers here"} end)
+  test "forward/4 raises Adapter.ParseError when Chat parse fails and Json fallback also fails" do
+    expect(Dsxir.LM.Sycophant, :generate_text, fn _, _, _ ->
+      {:ok, "no markers here", Dsxir.LM.empty_usage()}
+    end)
+
+    expect(Dsxir.LM.Sycophant, :generate_object, fn _, _, _, _ ->
+      {:ok, %{wrong_key: "x"}, Dsxir.LM.empty_usage()}
+    end)
 
     Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
-      assert_raise Dsxir.Errors.Adapter.ParseError, fn ->
+      assert_raise Dsxir.Errors.Adapter.FallbackExhausted, fn ->
         Predict.forward(%Dsxir.Program.State{}, AnswerQuestion, %{question: "x"}, [])
       end
     end)
   end
 
   test "forward/4 emits exception telemetry on parse error" do
-    expect(Dsxir.LM.Sycophant, :generate_text, fn _, _, _ -> {:ok, "no markers here"} end)
+    expect(Dsxir.LM.Sycophant, :generate_object, fn _, _, _, _ ->
+      {:ok, %{wrong_key: "x"}, Dsxir.LM.empty_usage()}
+    end)
 
     parent = self()
     handler_id = {__MODULE__, :exception_handler}
@@ -124,11 +185,14 @@ defmodule Dsxir.Predictor.PredictTest do
       nil
     )
 
-    Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
-      assert_raise Dsxir.Errors.Adapter.ParseError, fn ->
-        Predict.forward(%Dsxir.Program.State{}, AnswerQuestion, %{question: "x"}, [])
+    Dsxir.Settings.context(
+      [lm: {Dsxir.LM.Sycophant, [model: "stub"]}, adapter: Dsxir.Adapter.Json],
+      fn ->
+        assert_raise Dsxir.Errors.Adapter.ZoiValidation, fn ->
+          Predict.forward(%Dsxir.Program.State{}, AnswerQuestion, %{question: "x"}, [])
+        end
       end
-    end)
+    )
 
     assert_receive {:telemetry, %{error_class: :adapter, kind: :error}}
   end
@@ -143,5 +207,331 @@ defmodule Dsxir.Predictor.PredictTest do
         Predict.forward(%Dsxir.Program.State{}, AnswerQuestion, %{question: "x"}, [])
       end
     end)
+  end
+
+  test "forward/4 stamps parent path onto ZoiValidation raised from Json adapter" do
+    expect(Dsxir.LM.Sycophant, :generate_object, fn _, _, _, _ ->
+      {:ok, %{wrong_key: "x"}, Dsxir.LM.empty_usage()}
+    end)
+
+    Dsxir.Settings.context(
+      [lm: {Dsxir.LM.Sycophant, [model: "stub"]}, adapter: Dsxir.Adapter.Json],
+      fn ->
+        err =
+          try do
+            Predict.forward(%Dsxir.Program.State{}, AnswerQuestion, %{question: "x"},
+              path: [:run, :extract]
+            )
+
+            flunk("expected ZoiValidation")
+          rescue
+            e in Dsxir.Errors.Adapter.ZoiValidation -> e
+          end
+
+        assert %Dsxir.Errors.Adapter.ZoiValidation{path: [:run, :extract]} = err
+      end
+    )
+  end
+
+  test "forward/4 drives the Json adapter end-to-end via generate_object" do
+    expect(Dsxir.LM.Sycophant, :generate_object, fn _config, _msgs, _schema, _opts ->
+      {:ok, %{answer: "42"}, Dsxir.LM.empty_usage()}
+    end)
+
+    Dsxir.Settings.context(
+      [
+        lm: {Dsxir.LM.Sycophant, [model: "stub"]},
+        adapter: Dsxir.Adapter.Json
+      ],
+      fn ->
+        state = %Dsxir.Program.State{}
+
+        {^state, prediction} =
+          Predict.forward(state, AnswerQuestion, %{question: "What is the answer?"}, [])
+
+        assert %Dsxir.Prediction{} = prediction
+        assert prediction[:answer] == "42"
+      end
+    )
+  end
+
+  test "forward/4 stamps parent path with leaf field on per-field ParseError when Json fallback also fails" do
+    expect(Dsxir.LM.Sycophant, :generate_text, fn _, _, _ ->
+      {:ok, "[[ ## ranked ## ]]\n[\"a\"]", Dsxir.LM.empty_usage()}
+    end)
+
+    expect(Dsxir.LM.Sycophant, :generate_object, fn _, _, _, _ ->
+      {:error, %Dsxir.Errors.LM.ContextWindow{model_id: "stub"}}
+    end)
+
+    Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
+      err =
+        try do
+          Predict.forward(
+            %Dsxir.Program.State{},
+            Dsxir.Test.Fixtures.RankItems,
+            %{query: "x", items: ["a"]},
+            path: [:run, :extract]
+          )
+
+          flunk("expected FallbackExhausted")
+        rescue
+          e in Dsxir.Errors.Adapter.FallbackExhausted -> e
+        end
+
+      assert %Dsxir.Errors.Adapter.FallbackExhausted{
+               from: Dsxir.Adapter.Chat,
+               to: Dsxir.Adapter.Json,
+               path: [:run, :extract],
+               last_error: %Dsxir.Errors.LM.ContextWindow{}
+             } = err
+    end)
+  end
+
+  describe "Chat to Json one-shot fallback" do
+    test "falls back to Json adapter on Chat ParseError and returns prediction" do
+      expect(Dsxir.LM.Sycophant, :generate_text, fn _config, _msgs, _opts ->
+        {:ok, "no markers", Dsxir.LM.empty_usage()}
+      end)
+
+      expect(Dsxir.LM.Sycophant, :generate_object, fn _config, _msgs, _schema, _opts ->
+        {:ok, %{answer: "42"}, Dsxir.LM.empty_usage()}
+      end)
+
+      parent = self()
+      handler_id = {__MODULE__, :fallback_happy_handler}
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      :telemetry.attach(
+        handler_id,
+        Dsxir.Telemetry.adapter_fallback(),
+        fn _e, _meas, meta, _ -> send(parent, {:fallback, meta}) end,
+        nil
+      )
+
+      Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
+        state = %Dsxir.Program.State{}
+
+        {^state, prediction} =
+          Predict.forward(state, AnswerQuestion, %{question: "What is the answer?"}, [])
+
+        assert %Dsxir.Prediction{} = prediction
+        assert prediction[:answer] == "42"
+      end)
+
+      assert_receive {:fallback,
+                      %{
+                        from: Dsxir.Adapter.Chat,
+                        to: Dsxir.Adapter.Json,
+                        reason: %Dsxir.Errors.Adapter.ParseError{}
+                      }}
+    end
+
+    test "raises FallbackExhausted when Json adapter also fails" do
+      expect(Dsxir.LM.Sycophant, :generate_text, fn _config, _msgs, _opts ->
+        {:ok, "no markers", Dsxir.LM.empty_usage()}
+      end)
+
+      expect(Dsxir.LM.Sycophant, :generate_object, fn _config, _msgs, _schema, _opts ->
+        {:error,
+         %Dsxir.Errors.LM.ContextWindow{
+           model_id: "stub",
+           prompt_tokens: 9000,
+           limit: 8192
+         }}
+      end)
+
+      Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
+        err =
+          try do
+            Predict.forward(%Dsxir.Program.State{}, AnswerQuestion, %{question: "x"}, [])
+            flunk("expected FallbackExhausted")
+          rescue
+            e in Dsxir.Errors.Adapter.FallbackExhausted -> e
+          end
+
+        assert %Dsxir.Errors.Adapter.FallbackExhausted{
+                 from: Dsxir.Adapter.Chat,
+                 to: Dsxir.Adapter.Json,
+                 last_error: %Dsxir.Errors.LM.ContextWindow{}
+               } = err
+      end)
+    end
+
+    test "LM.ContextWindow on Chat triggers fallback and returns prediction" do
+      expect(Dsxir.LM.Sycophant, :generate_text, fn _config, _msgs, _opts ->
+        {:error,
+         %Dsxir.Errors.LM.ContextWindow{
+           model_id: "stub",
+           prompt_tokens: 9000,
+           limit: 8192
+         }}
+      end)
+
+      expect(Dsxir.LM.Sycophant, :generate_object, fn _config, _msgs, _schema, _opts ->
+        {:ok, %{answer: "ok"}, Dsxir.LM.empty_usage()}
+      end)
+
+      parent = self()
+      handler_id = {__MODULE__, :fallback_context_window_handler}
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      :telemetry.attach(
+        handler_id,
+        Dsxir.Telemetry.adapter_fallback(),
+        fn _e, _meas, meta, _ -> send(parent, {:fallback, meta}) end,
+        nil
+      )
+
+      Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
+        {%Dsxir.Program.State{}, prediction} =
+          Predict.forward(%Dsxir.Program.State{}, AnswerQuestion, %{question: "x"}, [])
+
+        assert prediction[:answer] == "ok"
+      end)
+
+      assert_receive {:fallback,
+                      %{
+                        from: Dsxir.Adapter.Chat,
+                        to: Dsxir.Adapter.Json,
+                        reason: %Dsxir.Errors.LM.ContextWindow{}
+                      }}
+    end
+
+    test "Authentication error on Chat propagates without firing fallback" do
+      expect(Dsxir.LM.Sycophant, :generate_text, fn _config, _msgs, _opts ->
+        {:error, %Dsxir.Errors.LM.Authentication{model_id: "stub", reason: :nope}}
+      end)
+
+      parent = self()
+      handler_id = {__MODULE__, :fallback_auth_handler}
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      :telemetry.attach(
+        handler_id,
+        Dsxir.Telemetry.adapter_fallback(),
+        fn _e, _meas, meta, _ -> send(parent, {:fallback, meta}) end,
+        nil
+      )
+
+      Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
+        assert_raise Dsxir.Errors.LM.Authentication, fn ->
+          Predict.forward(%Dsxir.Program.State{}, AnswerQuestion, %{question: "x"}, [])
+        end
+      end)
+
+      refute_receive {:fallback, _}, 50
+    end
+
+    test "Json primary failure propagates without fallback" do
+      expect(Dsxir.LM.Sycophant, :generate_object, fn _config, _msgs, _schema, _opts ->
+        {:ok, %{wrong_key: "not an answer"}, Dsxir.LM.empty_usage()}
+      end)
+
+      parent = self()
+      handler_id = {__MODULE__, :fallback_json_primary_handler}
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      :telemetry.attach(
+        handler_id,
+        Dsxir.Telemetry.adapter_fallback(),
+        fn _e, _meas, meta, _ -> send(parent, {:fallback, meta}) end,
+        nil
+      )
+
+      Dsxir.Settings.context(
+        [
+          lm: {Dsxir.LM.Sycophant, [model: "stub"]},
+          adapter: Dsxir.Adapter.Json
+        ],
+        fn ->
+          assert_raise Dsxir.Errors.Adapter.ZoiValidation, fn ->
+            Predict.forward(%Dsxir.Program.State{}, AnswerQuestion, %{question: "x"}, [])
+          end
+        end
+      )
+
+      refute_receive {:fallback, _}, 50
+    end
+  end
+
+  describe "streaming pass-through" do
+    test "forward/4 forwards :stream callback to LM impl and returns final prediction" do
+      parent = self()
+      ref = make_ref()
+
+      expect(Dsxir.LM.Sycophant, :generate_text, fn _config, _msgs, opts ->
+        callback = Keyword.fetch!(opts, :stream)
+        callback.(%Sycophant.StreamChunk{type: :text_delta, data: "[[ ## "})
+        callback.(%Sycophant.StreamChunk{type: :text_delta, data: "answer ## ]]\n"})
+        callback.(%Sycophant.StreamChunk{type: :text_delta, data: "42"})
+        callback.(%Sycophant.StreamChunk{type: :usage, data: %Sycophant.Usage{}})
+        callback.(%Sycophant.StreamChunk{type: :done, data: nil})
+        {:ok, "[[ ## answer ## ]]\n42", Dsxir.LM.empty_usage()}
+      end)
+
+      stream = fn chunk -> send(parent, {ref, chunk.type, chunk.data}) end
+
+      Dsxir.Settings.context(
+        [lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-4o-mini"]}],
+        fn ->
+          {%Dsxir.Program.State{}, prediction} =
+            Predict.forward(
+              %Dsxir.Program.State{},
+              AnswerQuestion,
+              %{question: "?"},
+              stream: stream
+            )
+
+          assert prediction[:answer] == "42"
+        end
+      )
+
+      assert_receive {^ref, :text_delta, "[[ ## "}
+      assert_receive {^ref, :text_delta, "answer ## ]]\n"}
+      assert_receive {^ref, :text_delta, "42"}
+      assert_receive {^ref, :usage, %Sycophant.Usage{}}
+      assert_receive {^ref, :done, nil}
+    end
+
+    test "forward/4 with Json adapter raises Invalid.Configuration when :stream is set" do
+      Dsxir.Settings.context(
+        [lm: {Dsxir.LM.Sycophant, [model: "stub"]}, adapter: Dsxir.Adapter.Json],
+        fn ->
+          err =
+            try do
+              Predict.forward(
+                %Dsxir.Program.State{},
+                AnswerQuestion,
+                %{question: "x"},
+                stream: fn _chunk -> :ok end
+              )
+
+              flunk("expected Invalid.Configuration")
+            rescue
+              e in Dsxir.Errors.Invalid.Configuration -> e
+            end
+
+          assert %Dsxir.Errors.Invalid.Configuration{
+                   key: :stream,
+                   reason: :streaming_unsupported_for_json_adapter
+                 } = err
+        end
+      )
+    end
+
+    test "forward/4 without :stream opt runs normally and invokes no callback" do
+      expect(Dsxir.LM.Sycophant, :generate_text, fn _config, _msgs, opts ->
+        refute Keyword.has_key?(opts, :stream)
+        {:ok, "[[ ## answer ## ]]\nok", Dsxir.LM.empty_usage()}
+      end)
+
+      Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
+        {%Dsxir.Program.State{}, prediction} =
+          Predict.forward(%Dsxir.Program.State{}, AnswerQuestion, %{question: "x"}, [])
+
+        assert prediction[:answer] == "ok"
+      end)
+    end
   end
 end

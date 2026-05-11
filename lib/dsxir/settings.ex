@@ -97,14 +97,23 @@ defmodule Dsxir.Settings do
   @doc """
   Replay a snapshot in the calling process for the duration of `fun.()`.
 
-  Writes globals unconditionally and does not restore them on exit; only the scope
-  stack is restored. Intended for short-lived worker processes (e.g.
-  `Task.async_stream` workers) that have no prior globals worth preserving. Do not
-  use to "temporarily" swap globals in a long-lived process.
+  Writes globals into `:persistent_term` only when the snapshot's globals differ
+  from the live globals — `:persistent_term.put/2` triggers a system-wide GC of
+  every process holding references and is designed for write-once-read-many data,
+  so fan-out workers (e.g. `Dsxir.Predictor.Parallel`) replaying the same
+  snapshot must not pay that cost N times. The scope stack is always restored on
+  exit; globals are not. Intended for short-lived worker processes that have no
+  prior globals worth preserving. Do not use to "temporarily" swap globals in a
+  long-lived process.
   """
   @spec run(%{globals: map(), stack: [map()]}, (-> any())) :: any()
   def run(%{globals: globals, stack: stack}, fun) when is_function(fun, 0) do
-    :persistent_term.put(@globals_key, globals)
+    current = :persistent_term.get(@globals_key, default_globals())
+
+    if globals != current do
+      :persistent_term.put(@globals_key, globals)
+    end
+
     prior_stack = stack()
     Process.put(@stack_key, stack)
 
