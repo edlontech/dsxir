@@ -3,14 +3,28 @@ defmodule Dsxir.Application do
 
   use Application
 
-  @doc false
   @impl true
   def start(_type, _args) do
+    install_default_globals()
+
     children =
-      dev_children()
+      [
+        {Task.Supervisor, name: Dsxir.TaskSupervisor},
+        Dsxir.History
+      ] ++ dev_children()
 
     opts = [strategy: :one_for_one, name: Dsxir.Supervisor]
     Supervisor.start_link(children, opts)
+  end
+
+  defp install_default_globals do
+    case :persistent_term.get({Dsxir.Settings, :globals}, :not_set) do
+      :not_set ->
+        :persistent_term.put({Dsxir.Settings, :globals}, Dsxir.Settings.default_globals())
+
+      _existing ->
+        :ok
+    end
   end
 
   if Mix.env() == :dev do
@@ -26,9 +40,9 @@ defmodule Dsxir.Application do
     end
 
     defp top_level_project? do
-      Code.ensure_loaded?(Mix.Project) and apply(Mix.Project, :get, []) == Dsxir.MixProject
+      Code.ensure_loaded?(Mix.Project) and Mix.Project.get() == Dsxir.MixProject
     end
   else
-    def dev_children, do: []
+    defp dev_children, do: []
   end
 end

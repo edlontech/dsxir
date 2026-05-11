@@ -1,0 +1,36 @@
+defmodule Dsxir.Module.RuntimeTest do
+  use ExUnit.Case, async: false
+  use Mimic
+
+  alias Dsxir.Test.Fixtures.AnswerProgram
+
+  setup :set_mimic_from_context
+
+  setup do
+    prior = Dsxir.Settings.snapshot()
+    on_exit(fn -> :persistent_term.put({Dsxir.Settings, :globals}, prior.globals) end)
+    :ok
+  end
+
+  test "call/4 routes through the declared predictor impl" do
+    expect(Dsxir.LM.Sycophant, :generate_text, fn _, _, _ ->
+      {:ok, "[[ ## answer ## ]]\n42"}
+    end)
+
+    Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
+      prog = Dsxir.Program.new(AnswerProgram)
+      {prog2, pred} = AnswerProgram.forward(prog, %{question: "ultimate?"})
+      assert pred[:answer] == "42"
+      assert prog2.module == AnswerProgram
+    end)
+  end
+
+  test "call/4 raises Invalid.Module on dynamic-dispatch typo at runtime" do
+    prog = Dsxir.Program.new(AnswerProgram)
+    name = :no_such_predictor
+
+    assert_raise Dsxir.Errors.Invalid.Module, fn ->
+      Dsxir.Module.Runtime.call(prog, name, %{question: "x"})
+    end
+  end
+end
