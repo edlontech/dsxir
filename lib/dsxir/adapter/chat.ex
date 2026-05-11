@@ -10,21 +10,58 @@ defmodule Dsxir.Adapter.Chat do
 
   @behaviour Dsxir.Adapter
 
+  alias Dsxir.Settings
   alias Dsxir.Signature.Runtime
+  alias Dsxir.Telemetry
   alias Sycophant.Message
 
   @marker ~r/\[\[\s*##\s*(?<name>[a-zA-Z0-9_]+)\s*##\s*\]\]/
 
   @impl Dsxir.Adapter
+  def lm_mode, do: :text
+
+  @impl Dsxir.Adapter
   def format(signature, inputs, demos, _opts) do
-    [
+    start = System.monotonic_time()
+
+    messages = [
       Message.system(system_prompt(signature)),
       Message.user(user_prompt(signature, inputs, demos))
     ]
+
+    Telemetry.emit(
+      Telemetry.adapter_format(),
+      %{duration: System.monotonic_time() - start},
+      Map.merge(Settings.resolve(:metadata, %{}), %{
+        adapter: __MODULE__,
+        signature: signature,
+        outcome: :ok
+      })
+    )
+
+    messages
   end
 
   @impl Dsxir.Adapter
-  def parse(signature, response, _opts) when is_binary(response) do
+  def parse(signature, response, opts) when is_binary(response) do
+    start = System.monotonic_time()
+    result = do_parse(signature, response, opts)
+    outcome = if match?({:ok, _}, result), do: :ok, else: :error
+
+    Telemetry.emit(
+      Telemetry.adapter_parse(),
+      %{duration: System.monotonic_time() - start},
+      Map.merge(Settings.resolve(:metadata, %{}), %{
+        adapter: __MODULE__,
+        signature: signature,
+        outcome: outcome
+      })
+    )
+
+    result
+  end
+
+  defp do_parse(signature, response, _opts) do
     case extract_fields(signature, response) do
       {:ok, raw} ->
         validate_fields(signature, raw)
@@ -178,7 +215,8 @@ defmodule Dsxir.Adapter.Chat do
            adapter: __MODULE__,
            field: field.name,
            reason: :missing_field,
-           raw_response: nil
+           raw_response: nil,
+           path: [field.name]
          }}
     end
   end
@@ -190,7 +228,8 @@ defmodule Dsxir.Adapter.Chat do
      %Dsxir.Errors.Adapter.ZoiValidation{
        adapter: __MODULE__,
        field: field.name,
-       zoi_errors: zoi_errors
+       zoi_errors: zoi_errors,
+       path: [field.name]
      }}
   end
 

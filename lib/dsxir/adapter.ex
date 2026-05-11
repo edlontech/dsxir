@@ -11,13 +11,17 @@ defmodule Dsxir.Adapter do
 
   @type messages :: [Sycophant.Message.t()]
   @type lm_response :: String.t()
+  @type signature :: module() | Dsxir.Signature.Compiled.t()
 
   @type adapter_error ::
           Dsxir.Errors.Adapter.ParseError.t()
           | Dsxir.Errors.Adapter.ZoiValidation.t()
           | Dsxir.Errors.Adapter.FallbackExhausted.t()
 
-  @callback format(module(), map(), list(), keyword()) :: messages()
-  @callback parse(module(), lm_response(), keyword()) ::
+  @callback format(signature(), map(), list(), keyword()) :: messages()
+  @callback parse(signature(), lm_response() | map(), keyword()) ::
               {:ok, map()} | {:error, adapter_error()}
+  @callback lm_mode() :: :text | :object
+
+  @optional_callbacks [lm_mode: 0]
 end

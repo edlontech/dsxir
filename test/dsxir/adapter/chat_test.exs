@@ -2,6 +2,7 @@ defmodule Dsxir.Adapter.ChatTest do
   use ExUnit.Case, async: true
 
   alias Dsxir.Adapter.Chat
+  alias Dsxir.Telemetry
   alias Dsxir.Test.Fixtures.AnswerQuestion
   alias Dsxir.Test.Fixtures.RankItems
 
@@ -128,6 +129,111 @@ defmodule Dsxir.Adapter.ChatTest do
 
       assert {:ok, %{ranked: ["a"], confidence: 0.5}} =
                Chat.parse(Dsxir.Test.Fixtures.RankItems, response, [])
+    end
+  end
+
+  describe "telemetry" do
+    test "format/4 and parse/3 emit single events with duration and ok outcome" do
+      parent = self()
+      ref = make_ref()
+      handler_id = {__MODULE__, ref}
+
+      :ok =
+        :telemetry.attach_many(
+          handler_id,
+          [Telemetry.adapter_format(), Telemetry.adapter_parse()],
+          fn event, meas, meta, _ -> send(parent, {ref, event, meas, meta}) end,
+          nil
+        )
+
+      try do
+        Chat.format(AnswerQuestion, %{question: "What is Elixir?"}, [], [])
+
+        response = """
+        [[ ## answer ## ]]
+        Elixir is a dynamic, functional language.
+        """
+
+        assert {:ok, %{answer: _}} = Chat.parse(AnswerQuestion, response, [])
+
+        assert_receive {^ref, [:dsxir, :adapter, :format], %{duration: format_duration},
+                        %{
+                          adapter: Dsxir.Adapter.Chat,
+                          signature: AnswerQuestion,
+                          outcome: :ok
+                        }},
+                       200
+
+        assert is_integer(format_duration) and format_duration >= 0
+
+        assert_receive {^ref, [:dsxir, :adapter, :parse], %{duration: parse_duration},
+                        %{
+                          adapter: Dsxir.Adapter.Chat,
+                          signature: AnswerQuestion,
+                          outcome: :ok
+                        }},
+                       200
+
+        assert is_integer(parse_duration) and parse_duration >= 0
+      after
+        :telemetry.detach(handler_id)
+      end
+    end
+
+    test "parse/3 emits an :error outcome when the response is malformed" do
+      parent = self()
+      ref = make_ref()
+      handler_id = {__MODULE__, ref}
+
+      :ok =
+        :telemetry.attach(
+          handler_id,
+          Telemetry.adapter_parse(),
+          fn _event, meas, meta, _ -> send(parent, {ref, meas, meta}) end,
+          nil
+        )
+
+      try do
+        assert {:error, _} = Chat.parse(RankItems, "totally malformed, no markers", [])
+
+        assert_receive {^ref, %{duration: duration},
+                        %{
+                          adapter: Dsxir.Adapter.Chat,
+                          signature: RankItems,
+                          outcome: :error
+                        }},
+                       200
+
+        assert is_integer(duration) and duration >= 0
+      after
+        :telemetry.detach(handler_id)
+      end
+    end
+
+    test "events carry settings-resolved metadata so child events inherit it" do
+      parent = self()
+      ref = make_ref()
+      handler_id = {__MODULE__, ref}
+
+      :ok =
+        :telemetry.attach_many(
+          handler_id,
+          [Telemetry.adapter_format(), Telemetry.adapter_parse()],
+          fn event, _meas, meta, _ -> send(parent, {ref, event, meta}) end,
+          nil
+        )
+
+      try do
+        Dsxir.Settings.context([metadata: %{tenant_id: "t-42"}], fn ->
+          Chat.format(AnswerQuestion, %{question: "x"}, [], [])
+          Chat.parse(AnswerQuestion, "[[ ## answer ## ]]\nhi", [])
+        end)
+
+        assert_receive {^ref, [:dsxir, :adapter, :format], %{tenant_id: "t-42"}}, 200
+        assert_receive {^ref, [:dsxir, :adapter, :parse], %{tenant_id: "t-42"}}, 200
+      after
+        :telemetry.detach(handler_id)
+      end
     end
   end
 end

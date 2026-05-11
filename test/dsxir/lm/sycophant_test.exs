@@ -11,12 +11,42 @@ defmodule Dsxir.LM.SycophantTest do
       {:ok, %Sycophant.Response{text: "hello", context: %Sycophant.Context{messages: []}}}
     end)
 
-    assert {:ok, "hello"} =
+    assert {:ok, "hello", %{tokens_in: nil, tokens_out: nil, cost: nil}} =
              Impl.generate_text(
                [model: "openai:gpt-4o-mini"],
                [Sycophant.Message.user("hi")],
                []
              )
+  end
+
+  test "generate_text/3 extracts usage tokens and cost from Sycophant.Usage" do
+    usage = %Sycophant.Usage{input_tokens: 10, output_tokens: 25, total_cost: 0.0001}
+
+    expect(Sycophant, :generate_text, fn _model, _msgs, _opts ->
+      {:ok,
+       %Sycophant.Response{
+         text: "hello",
+         usage: usage,
+         context: %Sycophant.Context{messages: []}
+       }}
+    end)
+
+    assert {:ok, "hello", %{tokens_in: 10, tokens_out: 25, cost: 0.0001}} =
+             Impl.generate_text([model: "m"], [], [])
+  end
+
+  test "generate_text/3 returns empty_usage map when Sycophant returns nil usage" do
+    expect(Sycophant, :generate_text, fn _model, _msgs, _opts ->
+      {:ok,
+       %Sycophant.Response{
+         text: "hello",
+         usage: nil,
+         context: %Sycophant.Context{messages: []}
+       }}
+    end)
+
+    assert {:ok, "hello", %{tokens_in: nil, tokens_out: nil, cost: nil}} =
+             Impl.generate_text([model: "m"], [], [])
   end
 
   test "generate_text/3 lifts api_key/base_url into credentials" do
@@ -83,12 +113,42 @@ defmodule Dsxir.LM.SycophantTest do
              Impl.generate_text([model: "m"], [], [])
   end
 
+  test "translates BadRequest with context-window phrase into ContextWindow" do
+    body =
+      "This model's maximum context length was exceeded: prompt of 9001 tokens, limit of 8192."
+
+    err = %Sycophant.Error.Provider.BadRequest{status: 400, body: body}
+
+    expect(Sycophant, :generate_text, fn _, _, _ -> {:error, err} end)
+
+    assert {:error,
+            %Dsxir.Errors.LM.ContextWindow{
+              model_id: "m",
+              prompt_tokens: 9001,
+              limit: 8192,
+              parent_error: ^err
+            }} = Impl.generate_text([model: "m"], [], [])
+  end
+
+  test "BadRequest without a context-window phrase still translates to RequestFailed" do
+    err = %Sycophant.Error.Provider.BadRequest{
+      status: 400,
+      body: "some unrelated upstream problem"
+    }
+
+    expect(Sycophant, :generate_text, fn _, _, _ -> {:error, err} end)
+
+    assert {:error,
+            %Dsxir.Errors.LM.RequestFailed{model_id: "m", status: 400, parent_error: ^err}} =
+             Impl.generate_text([model: "m"], [], [])
+  end
+
   test "translates Timeout to RequestFailed with nil status" do
     err = %Sycophant.Error.Provider.Timeout{reason: :etimeout}
 
     expect(Sycophant, :generate_text, fn _, _, _ -> {:error, err} end)
 
-    assert {:error, %Dsxir.Errors.LM.RequestFailed{status: nil, sycophant_error: ^err}} =
+    assert {:error, %Dsxir.Errors.LM.RequestFailed{status: nil, parent_error: ^err}} =
              Impl.generate_text([model: "m"], [], [])
   end
 
@@ -97,7 +157,7 @@ defmodule Dsxir.LM.SycophantTest do
 
     expect(Sycophant, :generate_text, fn _, _, _ -> {:error, err} end)
 
-    assert {:error, %Dsxir.Errors.LM.RequestFailed{status: nil, sycophant_error: ^err}} =
+    assert {:error, %Dsxir.Errors.LM.RequestFailed{status: nil, parent_error: ^err}} =
              Impl.generate_text([model: "m"], [], [])
   end
 
@@ -106,7 +166,7 @@ defmodule Dsxir.LM.SycophantTest do
 
     expect(Sycophant, :generate_text, fn _, _, _ -> {:error, err} end)
 
-    assert {:error, %Dsxir.Errors.LM.RequestFailed{model_id: "m", sycophant_error: ^err}} =
+    assert {:error, %Dsxir.Errors.LM.RequestFailed{model_id: "m", parent_error: ^err}} =
              Impl.generate_text([model: "m"], [], [])
   end
 
@@ -115,7 +175,7 @@ defmodule Dsxir.LM.SycophantTest do
 
     expect(Sycophant, :generate_text, fn _, _, _ -> {:error, err} end)
 
-    assert {:error, %Dsxir.Errors.LM.RequestFailed{model_id: "m", sycophant_error: ^err}} =
+    assert {:error, %Dsxir.Errors.LM.RequestFailed{model_id: "m", parent_error: ^err}} =
              Impl.generate_text([model: "m"], [], [])
   end
 
@@ -131,16 +191,16 @@ defmodule Dsxir.LM.SycophantTest do
   test "falls back to generic RequestFailed for unrecognised errors" do
     expect(Sycophant, :generate_text, fn _, _, _ -> {:error, :wat} end)
 
-    assert {:error, %Dsxir.Errors.LM.RequestFailed{sycophant_error: :wat}} =
+    assert {:error, %Dsxir.Errors.LM.RequestFailed{parent_error: :wat}} =
              Impl.generate_text([model: "m"], [], [])
   end
 
-  test "Response{text: nil} maps to RequestFailed{sycophant_error: :empty_response}" do
+  test "Response{text: nil} maps to RequestFailed{parent_error: :empty_response}" do
     expect(Sycophant, :generate_text, fn _, _, _ ->
       {:ok, %Sycophant.Response{text: nil, context: %Sycophant.Context{messages: []}}}
     end)
 
-    assert {:error, %Dsxir.Errors.LM.RequestFailed{sycophant_error: :empty_response}} =
+    assert {:error, %Dsxir.Errors.LM.RequestFailed{parent_error: :empty_response}} =
              Impl.generate_text([model: "m"], [], [])
   end
 
@@ -155,5 +215,108 @@ defmodule Dsxir.LM.SycophantTest do
       [],
       []
     )
+  end
+
+  describe "generate_object/4" do
+    test "returns {:ok, object, usage} on success" do
+      usage = %Sycophant.Usage{input_tokens: 7, output_tokens: 11, total_cost: 0.0002}
+
+      expect(Sycophant, :generate_object, fn "openai:gpt-4o-mini", _msgs, _schema, _opts ->
+        {:ok,
+         %Sycophant.Response{
+           text: nil,
+           object: %{"answer" => "42"},
+           usage: usage,
+           context: %Sycophant.Context{messages: []}
+         }}
+      end)
+
+      schema = Zoi.object(%{answer: Zoi.string()})
+
+      assert {:ok, %{"answer" => "42"}, %{tokens_in: 7, tokens_out: 11, cost: 0.0002}} =
+               Impl.generate_object(
+                 [model: "openai:gpt-4o-mini"],
+                 [Sycophant.Message.user("hi")],
+                 schema,
+                 []
+               )
+    end
+
+    test "returns {:ok, object, empty_usage} when Sycophant returns nil usage" do
+      expect(Sycophant, :generate_object, fn _model, _msgs, _schema, _opts ->
+        {:ok,
+         %Sycophant.Response{
+           object: %{"answer" => "42"},
+           usage: nil,
+           context: %Sycophant.Context{messages: []}
+         }}
+      end)
+
+      schema = Zoi.object(%{answer: Zoi.string()})
+
+      assert {:ok, %{"answer" => "42"}, %{tokens_in: nil, tokens_out: nil, cost: nil}} =
+               Impl.generate_object([model: "m"], [], schema, [])
+    end
+
+    test "returns RequestFailed{parent_error: :empty_object} when object is nil" do
+      expect(Sycophant, :generate_object, fn _model, _msgs, _schema, _opts ->
+        {:ok,
+         %Sycophant.Response{
+           object: nil,
+           usage: nil,
+           context: %Sycophant.Context{messages: []}
+         }}
+      end)
+
+      schema = Zoi.object(%{answer: Zoi.string()})
+
+      assert {:error,
+              %Dsxir.Errors.LM.RequestFailed{
+                model_id: "m",
+                status: nil,
+                parent_error: :empty_object
+              }} =
+               Impl.generate_object([model: "m"], [], schema, [])
+    end
+
+    test "translates upstream errors via the same translate path" do
+      err = %Sycophant.Error.Provider.AuthenticationFailed{status: 401, body: "nope"}
+
+      expect(Sycophant, :generate_object, fn _, _, _, _ -> {:error, err} end)
+
+      schema = Zoi.object(%{answer: Zoi.string()})
+
+      assert {:error, %Dsxir.Errors.LM.Authentication{model_id: "m", reason: ^err}} =
+               Impl.generate_object([model: "m"], [], schema, [])
+    end
+
+    test "lifts api_key/base_url into credentials and drops :headers" do
+      expect(Sycophant, :generate_object, fn _model, _msgs, _schema, opts ->
+        assert opts[:credentials] == %{api_key: "sk-test", base_url: "https://example.test"}
+        refute Keyword.has_key?(opts, :api_key)
+        refute Keyword.has_key?(opts, :base_url)
+        refute Keyword.has_key?(opts, :headers)
+
+        {:ok,
+         %Sycophant.Response{
+           object: %{"answer" => "ok"},
+           context: %Sycophant.Context{messages: []}
+         }}
+      end)
+
+      schema = Zoi.object(%{answer: Zoi.string()})
+
+      Impl.generate_object(
+        [
+          model: "m",
+          api_key: "sk-test",
+          base_url: "https://example.test",
+          headers: [{"x-foo", "bar"}]
+        ],
+        [],
+        schema,
+        []
+      )
+    end
   end
 end
