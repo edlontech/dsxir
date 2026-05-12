@@ -109,6 +109,125 @@ defmodule Dsxir.Optimizer.BootstrapFewShotTest do
     assert match?({_, _, _}, config[:_dsxir_nonce])
   end
 
+  defmodule HeadSig do
+    use Dsxir.Signature
+
+    signature do
+      input(:q, :string)
+      output(:topic, :string)
+    end
+  end
+
+  defmodule TailSig do
+    use Dsxir.Signature
+
+    signature do
+      input(:topic, :string)
+      output(:answer, :string)
+    end
+  end
+
+  defmodule TwoStepProg do
+    use Dsxir.Module
+
+    predictor(:head, Dsxir.Predictor.ChainOfThought, signature: HeadSig)
+    predictor(:tail, Dsxir.Predictor.Predict, signature: TailSig)
+
+    def forward(p, %{q: q}) do
+      {p, head} = call(p, :head, %{q: q})
+      {p, tail} = call(p, :tail, %{topic: head.fields.topic})
+      {p, tail}
+    end
+  end
+
+  defp pair_metric(_e, %Dsxir.Prediction{fields: %{answer: a}}, _t) when is_binary(a) do
+    if String.starts_with?(a, "good-"), do: 1.0, else: 0.0
+  end
+
+  @tag :tmp_dir
+  test "multi-predictor pipeline with ChainOfThought saves and loads cleanly",
+       %{tmp_dir: tmp_dir} do
+    counter = :counters.new(1, [:atomics])
+
+    Mimic.stub(Dsxir.LM.Sycophant, :generate_text, fn _config, _messages, _opts ->
+      :counters.add(counter, 1, 1)
+      idx = :counters.get(counter, 1)
+
+      payload =
+        case rem(idx, 2) do
+          1 ->
+            "[[ ## reasoning ## ]]\nbecause #{idx}\n\n[[ ## topic ## ]]\ntopic-#{idx}"
+
+          0 ->
+            "[[ ## answer ## ]]\ngood-#{idx}"
+        end
+
+      {:ok, payload, Dsxir.LM.empty_usage()}
+    end)
+
+    trainset =
+      Enum.map(1..3, fn i ->
+        Dsxir.Example.new(%{q: "q#{i}", answer: "good-#{i}"}, input_keys: [:q])
+      end)
+
+    Dsxir.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
+      {:ok, compiled, stats} =
+        BootstrapFewShot.compile(
+          Program.new(TwoStepProg),
+          trainset,
+          &pair_metric/3,
+          max_labeled_demos: 2,
+          max_bootstrapped_demos: 2,
+          max_rounds: 1,
+          threshold: 1.0,
+          deterministic: true
+        )
+
+      assert stats.predictor_count == 2
+
+      head_demos = Program.get_state(compiled, :head).demos
+      tail_demos = Program.get_state(compiled, :tail).demos
+
+      assert Enum.all?(head_demos, &match?(%Dsxir.Demo{}, &1))
+      assert Enum.all?(tail_demos, &match?(%Dsxir.Demo{}, &1))
+
+      path = Path.join(tmp_dir, "two-step-#{:erlang.unique_integer([:positive])}.json")
+      assert {:ok, ^path} = Dsxir.Artifact.save(compiled, path)
+      assert {:ok, _reloaded} = Dsxir.Artifact.load(TwoStepProg, path)
+    end)
+  end
+
+  test "labeled demos do not land in predictors they cannot fill" do
+    Mimic.stub(Dsxir.LM.Sycophant, :generate_text, fn _, _, _ ->
+      {:ok, "[[ ## answer ## ]]\ngood-stub", Dsxir.LM.empty_usage()}
+    end)
+
+    trainset =
+      Enum.map(1..3, fn i ->
+        Dsxir.Example.new(%{q: "q#{i}", answer: "good-#{i}"}, input_keys: [:q])
+      end)
+
+    Dsxir.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
+      {:ok, compiled, _stats} =
+        BootstrapFewShot.compile(
+          Program.new(TwoStepProg),
+          trainset,
+          &pair_metric/3,
+          max_labeled_demos: 3,
+          max_bootstrapped_demos: 0,
+          max_rounds: 1,
+          threshold: 1.0,
+          deterministic: true
+        )
+
+      head_demos = Program.get_state(compiled, :head).demos
+      tail_demos = Program.get_state(compiled, :tail).demos
+
+      assert head_demos == []
+      assert tail_demos == []
+    end)
+  end
+
   test "metadata.compiled_with and trainset_hash are stamped" do
     scripted_lm(fn _ -> "good-stub" end)
 

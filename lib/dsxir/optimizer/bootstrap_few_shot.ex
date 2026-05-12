@@ -7,8 +7,10 @@ defmodule Dsxir.Optimizer.BootstrapFewShot do
 
     1. **Labeled.** Up to `:max_labeled_demos` examples are picked from the
        trainset (uniform random; deterministic-by-hash when `:deterministic`
-       is set) and slotted into every predictor's state as
-       `%Dsxir.Demo{kind: :labeled}`. No LM call.
+       is set). Each chosen example is slotted as `%Dsxir.Demo{kind: :labeled}`
+       only into predictors whose declared input + output fields the demo's
+       data keys cover; non-matching predictors get no labeled demo from
+       that example. No LM call.
 
     2. **Bootstrap.** For each round in `1..max_rounds`, the trainset is
        walked example-by-example. For each example, the program is run inside
@@ -76,8 +78,10 @@ defmodule Dsxir.Optimizer.BootstrapFewShot do
   alias Dsxir.Demo
   alias Dsxir.Errors
   alias Dsxir.Metric
+  alias Dsxir.Module.Info, as: ModuleInfo
   alias Dsxir.Program
   alias Dsxir.Settings
+  alias Dsxir.Signature.Runtime, as: SignatureRuntime
   alias Dsxir.Telemetry
 
   @default_max_labeled_demos 4
@@ -306,10 +310,19 @@ defmodule Dsxir.Optimizer.BootstrapFewShot do
 
   defp stamp_path(err, _prefix), do: err
 
-  defp slot_all(%Program{predictors: predictors} = prog, labeled, bootstrapped, trainset) do
+  defp slot_all(
+         %Program{module: user_module, predictors: predictors} = prog,
+         labeled,
+         bootstrapped,
+         trainset
+       ) do
+    decls = ModuleInfo.module(user_module)
+
     updated =
       Map.new(predictors, fn {name, %Program.State{} = state} ->
-        per_predictor = labeled ++ Map.get(bootstrapped, name, [])
+        decl = Enum.find(decls, &(&1.name == name))
+        compatible_labeled = compatible_demos(labeled, decl)
+        per_predictor = compatible_labeled ++ Map.get(bootstrapped, name, [])
         {name, %{state | demos: per_predictor}}
       end)
 
@@ -321,6 +334,21 @@ defmodule Dsxir.Optimizer.BootstrapFewShot do
 
     %{prog | predictors: updated, metadata: metadata}
   end
+
+  defp compatible_demos(demos, decl) do
+    required = required_field_names(decl)
+    Enum.filter(demos, fn demo -> MapSet.subset?(required, demo_key_set(demo)) end)
+  end
+
+  defp required_field_names(decl) do
+    decl.signature
+    |> SignatureRuntime.fields()
+    |> Enum.map(& &1.name)
+    |> MapSet.new()
+  end
+
+  defp demo_key_set(%Demo{example: %Dsxir.Example{data: data}}), do: MapSet.new(Map.keys(data))
+  defp demo_key_set(%Dsxir.Example{data: data}), do: MapSet.new(Map.keys(data))
 
   defp trainset_hash(trainset) do
     :crypto.hash(:sha256, :erlang.term_to_binary(trainset)) |> Base.encode16(case: :lower)

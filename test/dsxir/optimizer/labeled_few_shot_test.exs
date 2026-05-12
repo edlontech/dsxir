@@ -86,6 +86,53 @@ defmodule Dsxir.Optimizer.LabeledFewShotTest do
     assert Program.get_state(c1, :answer).demos == Program.get_state(c2, :answer).demos
   end
 
+  defmodule HeadSig do
+    use Dsxir.Signature
+
+    signature do
+      input(:q, :string)
+      output(:topic, :string)
+    end
+  end
+
+  defmodule TailSig do
+    use Dsxir.Signature
+
+    signature do
+      input(:topic, :string)
+      output(:answer, :string)
+    end
+  end
+
+  defmodule TwoStepProg do
+    use Dsxir.Module
+
+    predictor(:head, Dsxir.Predictor.Predict, signature: HeadSig)
+    predictor(:tail, Dsxir.Predictor.Predict, signature: TailSig)
+
+    def forward(p, %{q: q}) do
+      {p, head} = call(p, :head, %{q: q})
+      {p, tail} = call(p, :tail, %{topic: head.fields.topic})
+      {p, tail}
+    end
+  end
+
+  test "labeled demo only lands in predictors whose declared fields it covers" do
+    trainset =
+      Enum.map(1..3, fn i ->
+        Dsxir.Example.new(%{q: "q#{i}", topic: "t#{i}"}, input_keys: [:q])
+      end)
+
+    {:ok, compiled, _stats} =
+      LabeledFewShot.compile(Program.new(TwoStepProg), trainset, &metric/3, max_labeled_demos: 3)
+
+    head_demos = Program.get_state(compiled, :head).demos
+    tail_demos = Program.get_state(compiled, :tail).demos
+
+    assert length(head_demos) == 3
+    assert tail_demos == []
+  end
+
   test "stamps metadata.compiled_with, score, trainset_hash" do
     trainset = [ex("q1", "a1")]
 

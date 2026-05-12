@@ -175,7 +175,8 @@ defmodule Dsxir.Artifact do
     Map.new(decls, fn decl ->
       inputs = Enum.map(SignatureRuntime.inputs(decl.signature), & &1.name)
       outputs = Enum.map(SignatureRuntime.outputs(decl.signature), & &1.name)
-      {decl.name, %{inputs: inputs, outputs: outputs}}
+      augmented = Dsxir.Predictor.augmented_outputs(decl.impl, decl.signature)
+      {decl.name, %{inputs: inputs, outputs: outputs, augmented_outputs: augmented}}
     end)
   end
 
@@ -214,10 +215,11 @@ defmodule Dsxir.Artifact do
 
   defp field_diffs(expected, loaded, common_names) do
     Enum.flat_map(common_names, fn name ->
-      sig_fields = MapSet.new(expected[name].inputs ++ expected[name].outputs)
+      declared = MapSet.new(expected[name].inputs ++ expected[name].outputs)
+      allowed = MapSet.union(declared, MapSet.new(expected[name].augmented_outputs))
       demo_lists = Map.fetch!(loaded, Atom.to_string(name))
 
-      {missing, extra} = compare_fields(sig_fields, demo_lists)
+      {missing, extra} = compare_fields(declared, allowed, demo_lists)
 
       if missing == [] and extra == [],
         do: [],
@@ -225,22 +227,22 @@ defmodule Dsxir.Artifact do
     end)
   end
 
-  defp compare_fields(_sig_fields, []), do: {[], []}
+  defp compare_fields(_declared, _allowed, []), do: {[], []}
 
-  defp compare_fields(sig_fields, demo_lists) do
+  defp compare_fields(declared, allowed, demo_lists) do
     demo_keysets =
       Enum.map(demo_lists, fn keys ->
         keys |> Enum.map(&safe_existing_atom/1) |> Enum.reject(&is_nil/1) |> MapSet.new()
       end)
 
     intersection_present =
-      Enum.reduce(demo_keysets, sig_fields, fn keyset, acc -> MapSet.intersection(acc, keyset) end)
+      Enum.reduce(demo_keysets, declared, fn keyset, acc -> MapSet.intersection(acc, keyset) end)
 
     union_extra =
       Enum.reduce(demo_keysets, MapSet.new(), fn keyset, acc -> MapSet.union(acc, keyset) end)
 
-    missing = sig_fields |> MapSet.difference(intersection_present) |> Enum.sort()
-    extra = union_extra |> MapSet.difference(sig_fields) |> Enum.sort()
+    missing = declared |> MapSet.difference(intersection_present) |> Enum.sort()
+    extra = union_extra |> MapSet.difference(allowed) |> Enum.sort()
     {missing, extra}
   end
 

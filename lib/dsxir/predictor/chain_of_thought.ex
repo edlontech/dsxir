@@ -21,6 +21,9 @@ defmodule Dsxir.Predictor.ChainOfThought do
     Dsxir.Predictor.Predict.forward(state, augmented, inputs, opts)
   end
 
+  @impl Dsxir.Predictor
+  def augmented_outputs(_signature), do: [:reasoning]
+
   @doc false
   @spec augment(Runtime.signature()) :: Compiled.t()
   def augment(signature) do

@@ -62,6 +62,9 @@ defmodule Dsxir.Predictor.ReAct do
   end
 
   @impl Dsxir.Predictor
+  def augmented_outputs(_signature), do: [:trajectory]
+
+  @impl Dsxir.Predictor
   def forward(%Dsxir.Program.State{} = pstate, signature, inputs, opts) do
     tools = Keyword.fetch!(opts, :tools)
     max_iters = Keyword.get(opts, :max_iters, 8)

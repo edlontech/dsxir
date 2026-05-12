@@ -1,8 +1,17 @@
 defmodule Dsxir.Optimizer.LabeledFewShot do
   @moduledoc """
   Optimizer that slots up to `:max_labeled_demos` examples from `trainset` into
-  every predictor's `Dsxir.Program.State.demos`. No LM call. The metric argument
+  each predictor's `Dsxir.Program.State.demos`. No LM call. The metric argument
   is accepted but unused — interface uniformity for richer optimizers.
+
+  ## Multi-predictor pipelines
+
+  A labeled demo is slotted into a predictor only when the demo's data
+  keys cover the predictor's declared input + output fields. Trainset
+  examples that fit one predictor's signature but not another's are
+  routed only to predictors they fit; non-matching predictors get an
+  empty labeled-demos list. This keeps saved artifacts well-formed and
+  mirrors DSPy's per-predictor demo handling.
 
   ## Options
 
@@ -35,7 +44,9 @@ defmodule Dsxir.Optimizer.LabeledFewShot do
   @behaviour Dsxir.Optimizer
 
   alias Dsxir.Errors
+  alias Dsxir.Module.Info, as: ModuleInfo
   alias Dsxir.Program
+  alias Dsxir.Signature.Runtime, as: SignatureRuntime
 
   @default_max_labeled_demos 16
 
@@ -92,16 +103,34 @@ defmodule Dsxir.Optimizer.LabeledFewShot do
 
   defp pick(trainset, max, false), do: Enum.take_random(trainset, max)
 
-  defp slot_demos_for_all(%Program{predictors: predictors} = prog, demos) do
+  defp slot_demos_for_all(%Program{module: user_module, predictors: predictors} = prog, demos) do
     wrapped = Enum.map(demos, &Dsxir.Demo.labeled/1)
+    decls = ModuleInfo.module(user_module)
 
     updated =
       Map.new(predictors, fn {name, %Program.State{} = state} ->
-        {name, %{state | demos: wrapped}}
+        decl = Enum.find(decls, &(&1.name == name))
+        compatible = compatible_demos(wrapped, decl)
+        {name, %{state | demos: compatible}}
       end)
 
     %{prog | predictors: updated}
   end
+
+  defp compatible_demos(demos, decl) do
+    required = required_field_names(decl)
+    Enum.filter(demos, fn demo -> MapSet.subset?(required, demo_key_set(demo)) end)
+  end
+
+  defp required_field_names(decl) do
+    decl.signature
+    |> SignatureRuntime.fields()
+    |> Enum.map(& &1.name)
+    |> MapSet.new()
+  end
+
+  defp demo_key_set(%Dsxir.Demo{example: %Dsxir.Example{data: data}}), do: MapSet.new(Map.keys(data))
+  defp demo_key_set(%Dsxir.Example{data: data}), do: MapSet.new(Map.keys(data))
 
   defp stamp_metadata(%Program{} = prog, trainset) do
     metadata =

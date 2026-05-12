@@ -181,6 +181,83 @@ defmodule Dsxir.ArtifactLoadTest do
     assert_raise SignatureMismatch, fn -> Artifact.load!(ProgB, path) end
   end
 
+  defmodule CoTProg do
+    use Dsxir.Module
+
+    predictor(:think, Dsxir.Predictor.ChainOfThought, signature: SigA)
+
+    def forward(p, i), do: call(p, :think, i)
+  end
+
+  @tag :tmp_dir
+  test "ChainOfThought demos with :reasoning roundtrip without SignatureMismatch",
+       %{tmp_dir: tmp_dir} do
+    path = Path.join(tmp_dir, "dsxir-cot-#{:erlang.unique_integer([:positive])}.json")
+
+    payload = %{
+      "think" => %{
+        "instructions" => nil,
+        "demos" => [
+          %{
+            "q" => "q1",
+            "a" => "a1",
+            "reasoning" => "step-by-step",
+            "_kind" => "bootstrapped"
+          }
+        ]
+      },
+      "_metadata" => %{
+        "compiled_with" => nil,
+        "score" => nil,
+        "trainset_hash" => nil
+      }
+    }
+
+    File.write!(path, Jason.encode!(payload))
+
+    {:ok, prog} = Artifact.load(CoTProg, path)
+    state = Program.get_state(prog, :think)
+
+    assert [
+             %Dsxir.Demo{
+               kind: :bootstrapped,
+               example: %Dsxir.Example{
+                 data: %{q: "q1", a: "a1", reasoning: "step-by-step"}
+               }
+             }
+           ] = state.demos
+  end
+
+  @tag :tmp_dir
+  test "augmented :reasoning is not flagged as extra alongside declared-only demos",
+       %{tmp_dir: tmp_dir} do
+    path = Path.join(tmp_dir, "dsxir-cot-mixed-#{:erlang.unique_integer([:positive])}.json")
+
+    payload = %{
+      "think" => %{
+        "instructions" => nil,
+        "demos" => [
+          %{"q" => "q1", "a" => "a1", "_kind" => "labeled"},
+          %{
+            "q" => "q2",
+            "a" => "a2",
+            "reasoning" => "step-by-step",
+            "_kind" => "bootstrapped"
+          }
+        ]
+      },
+      "_metadata" => %{
+        "compiled_with" => nil,
+        "score" => nil,
+        "trainset_hash" => nil
+      }
+    }
+
+    File.write!(path, Jason.encode!(payload))
+
+    assert {:ok, _prog} = Artifact.load(CoTProg, path)
+  end
+
   @tag :tmp_dir
   test "custom metadata keys survive save/load roundtrip", %{tmp_dir: tmp_dir} do
     trainset = Enum.map(1..3, &ex("q#{&1}", "a#{&1}"))
