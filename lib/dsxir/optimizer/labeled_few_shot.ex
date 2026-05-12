@@ -129,7 +129,9 @@ defmodule Dsxir.Optimizer.LabeledFewShot do
     |> MapSet.new()
   end
 
-  defp demo_key_set(%Dsxir.Demo{example: %Dsxir.Example{data: data}}), do: MapSet.new(Map.keys(data))
+  defp demo_key_set(%Dsxir.Demo{example: %Dsxir.Example{data: data}}),
+    do: MapSet.new(Map.keys(data))
+
   defp demo_key_set(%Dsxir.Example{data: data}), do: MapSet.new(Map.keys(data))
 
   defp stamp_metadata(%Program{} = prog, trainset) do
