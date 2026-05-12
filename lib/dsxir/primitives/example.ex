@@ -14,6 +14,10 @@ defmodule Dsxir.Example do
           input_keys: MapSet.t()
         }
 
+  @doc """
+  Build an example from `data`. Pass `:input_keys` in `opts` to mark which keys
+  are inputs; everything else is treated as a label.
+  """
   @spec new(map(), keyword()) :: t()
   def new(data, opts \\ []) when is_map(data) and is_list(opts) do
     %__MODULE__{
@@ -22,16 +26,19 @@ defmodule Dsxir.Example do
     }
   end
 
+  @doc "Replace the example's input-key set with `keys`."
   @spec with_inputs(t(), [atom()]) :: t()
   def with_inputs(%__MODULE__{} = example, keys) when is_list(keys) do
     %{example | input_keys: MapSet.new(keys)}
   end
 
+  @doc "Project `data` down to the input fields only."
   @spec inputs(t()) :: map()
   def inputs(%__MODULE__{data: data, input_keys: keys}) do
     Map.take(data, MapSet.to_list(keys))
   end
 
+  @doc "Project `data` down to the label fields (the complement of the inputs)."
   @spec labels(t()) :: map()
   def labels(%__MODULE__{data: data, input_keys: keys}) do
     Map.drop(data, MapSet.to_list(keys))

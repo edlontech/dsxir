@@ -4,6 +4,7 @@ defmodule Dsxir.Signature.Parser do
   alias Dsxir.Signature.Compiled
   alias Dsxir.Signature.Field
 
+  @doc false
   @spec parse(String.t()) :: {:ok, Compiled.t()} | {:error, term()}
   def parse(source) when is_binary(source) do
     case String.split(source, "->", parts: 2) do

@@ -24,9 +24,11 @@ defmodule Dsxir.Primitives.History do
   @type message :: %{role: role(), content: String.t()}
   @type t :: %__MODULE__{messages: [message()]}
 
+  @doc "Build a new conversation, optionally seeded with `messages`."
   @spec new([message()]) :: t()
   def new(messages \\ []) when is_list(messages), do: %__MODULE__{messages: messages}
 
+  @doc "Append a message with the given `role` and `content` to the conversation."
   @spec push(t(), role(), String.t()) :: t()
   def push(%__MODULE__{messages: msgs} = h, role, content)
       when role in [:system, :user, :assistant] and is_binary(content) do

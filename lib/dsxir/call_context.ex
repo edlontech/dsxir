@@ -25,6 +25,10 @@ defmodule Dsxir.CallContext do
           opts: keyword()
         }
 
+  @doc """
+  Build a `t()` from `fields`. Raises if any of the `:predictor`, `:signature`,
+  `:inputs`, or `:program` keys are missing.
+  """
   @spec new(keyword()) :: t()
   def new(fields) when is_list(fields) do
     struct!(__MODULE__, fields)

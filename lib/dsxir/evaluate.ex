@@ -55,6 +55,12 @@ defmodule Dsxir.Evaluate do
           timeout: pos_integer()
         }
 
+  @doc """
+  Evaluate `program` over the configured devset. Per-row failures are caught
+  and reported in the returned `EvaluationResult`; the run never aborts on a
+  single error. When `:save_as` is set, the rows are persisted as JSON Lines
+  before returning.
+  """
   @spec run(t(), Dsxir.Program.t()) :: EvaluationResult.t()
   def run(%__MODULE__{} = ev, %Dsxir.Program{} = program) do
     snapshot = Settings.snapshot()
@@ -96,6 +102,11 @@ defmodule Dsxir.Evaluate do
     result
   end
 
+  @doc """
+  Bang variant of `run/2`. Returns the result when zero rows errored and
+  otherwise raises `Dsxir.Errors.Framework.PredictorError` with the per-class
+  error counts.
+  """
   @spec run!(t(), Dsxir.Program.t()) :: EvaluationResult.t()
   def run!(%__MODULE__{} = ev, %Dsxir.Program{} = program) do
     case run(ev, program) do

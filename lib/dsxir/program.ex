@@ -31,6 +31,10 @@ defmodule Dsxir.Program do
           metadata: map()
         }
 
+  @doc """
+  Build a fresh program for `user_module`. Raises
+  `Dsxir.Errors.Invalid.Module` when the module is not a `Dsxir.Module`.
+  """
   @spec new(module()) :: t()
   def new(user_module) when is_atom(user_module) do
     if Spark.Dsl.is?(user_module, Dsxir.Module) do
@@ -49,6 +53,7 @@ defmodule Dsxir.Program do
     end
   end
 
+  @doc "Build a program with explicit predictor names (used internally by load)."
   @spec new(module(), [atom()]) :: t()
   def new(user_module, predictor_names) when is_atom(user_module) and is_list(predictor_names) do
     %__MODULE__{
@@ -57,6 +62,7 @@ defmodule Dsxir.Program do
     }
   end
 
+  @doc "Fetch the per-predictor `State` slot, raising if `name` is unknown."
   @spec get_state(t(), atom()) :: State.t()
   def get_state(%__MODULE__{module: module, predictors: predictors}, name) when is_atom(name) do
     case Map.fetch(predictors, name) do
@@ -72,6 +78,7 @@ defmodule Dsxir.Program do
     end
   end
 
+  @doc "Replace the `State` for `name` in `prog`, returning the updated program."
   @spec put_state(t(), atom(), State.t()) :: t()
   def put_state(%__MODULE__{} = prog, name, %State{} = state) when is_atom(name) do
     %{prog | predictors: Map.put(prog.predictors, name, state)}

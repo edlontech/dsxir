@@ -28,6 +28,12 @@ defmodule Dsxir.Predictor.Parallel do
 
   @default_timeout 30_000
 
+  @doc """
+  Run `requests` concurrently under `Dsxir.TaskSupervisor` and merge each
+  worker's predictor state back into the returned program. Results preserve
+  input order, with failures surfaced as `{:error, exception}` tuples rather
+  than raised.
+  """
   @spec run(Program.t(), [request()], keyword()) :: {Program.t(), [result()]}
   def run(%Program{} = prog, requests, opts \\ []) when is_list(requests) do
     snapshot = Settings.snapshot()

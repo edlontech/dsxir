@@ -5,6 +5,7 @@ defmodule Dsxir.Signature.Transformer do
 
   alias Spark.Dsl.Transformer
 
+  @doc false
   @spec transform(Spark.Dsl.t()) :: {:ok, Spark.Dsl.t()} | {:error, term()}
   def transform(dsl_state) do
     module = Transformer.get_persisted(dsl_state, :module)

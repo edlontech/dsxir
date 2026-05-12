@@ -28,17 +28,23 @@ defmodule Dsxir.EvaluationResult do
           errors: %{count: non_neg_integer(), by_class: %{atom() => non_neg_integer()}}
         }
 
+  @doc "Build a successful row with its example, prediction, and numeric metric."
   @spec ok_row(Dsxir.Example.t(), Dsxir.Prediction.t(), float()) :: row()
   def ok_row(%Dsxir.Example{} = ex, %Dsxir.Prediction{} = pred, metric)
       when is_float(metric) do
     %{example: ex, prediction: pred, metric: metric, error: nil}
   end
 
+  @doc "Build an errored row, attaching the caught exception in place of a prediction."
   @spec error_row(Dsxir.Example.t(), Exception.t()) :: row()
   def error_row(%Dsxir.Example{} = ex, %{__exception__: true} = err) do
     %{example: ex, prediction: nil, metric: nil, error: err}
   end
 
+  @doc """
+  Aggregate `values` into a 0..100 score by averaging and scaling, rounded to
+  one decimal place. An empty list returns `0.0`.
+  """
   @spec score_from(list(float())) :: float()
   def score_from([]), do: 0.0
 

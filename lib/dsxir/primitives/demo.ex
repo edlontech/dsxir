@@ -29,9 +29,14 @@ defmodule Dsxir.Demo do
           source: source()
         }
 
+  @doc "Wrap `ex` as a labeled demo (provenance: directly from the trainset)."
   @spec labeled(Dsxir.Example.t()) :: t()
   def labeled(%Dsxir.Example{} = ex), do: %__MODULE__{example: ex, kind: :labeled}
 
+  @doc """
+  Wrap `ex` as a bootstrapped demo captured from a successful trace round.
+  `source` records the round and trainset example that produced it.
+  """
   @spec bootstrapped(Dsxir.Example.t(), source()) :: t()
   def bootstrapped(%Dsxir.Example{} = ex, source) when is_map(source) do
     %__MODULE__{example: ex, kind: :bootstrapped, source: source}

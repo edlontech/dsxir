@@ -29,6 +29,7 @@ defmodule Dsxir.Retrieval.InMemory do
           vectors: [[float()]]
         }
 
+  @doc "Embed and append `new_docs` to the index, returning the updated struct."
   @spec add(t(), [String.t()], keyword()) :: {:ok, t()} | {:error, term()}
   def add(%__MODULE__{embedder: emb, docs: docs, vectors: vectors} = idx, new_docs, opts \\ [])
       when is_list(new_docs) do
@@ -41,6 +42,10 @@ defmodule Dsxir.Retrieval.InMemory do
     end
   end
 
+  @doc """
+  Return the top `:k` (default 3) documents ranked by cosine similarity against
+  the embedded `query`.
+  """
   @spec search(t(), String.t(), keyword()) ::
           {:ok, [%{doc: String.t(), score: float()}]} | {:error, term()}
   def search(%__MODULE__{embedder: emb, docs: docs, vectors: vectors}, query, opts \\ [])
@@ -63,11 +68,13 @@ defmodule Dsxir.Retrieval.InMemory do
     end
   end
 
+  @doc "Persist the index to `path` using `:erlang.term_to_binary/1`."
   @spec save(t(), Path.t()) :: :ok | {:error, File.posix()}
   def save(%__MODULE__{} = idx, path) do
     File.write(path, :erlang.term_to_binary(idx))
   end
 
+  @doc "Load an index from `path` previously written by `save/2`."
   @spec load(Path.t()) :: {:ok, t()} | {:error, term()}
   def load(path) do
     with {:ok, bin} <- File.read(path) do

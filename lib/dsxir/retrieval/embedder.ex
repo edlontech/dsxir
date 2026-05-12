@@ -13,6 +13,10 @@ defmodule Dsxir.Retrieval.Embedder do
 
   @type t :: %__MODULE__{batch_size: pos_integer()}
 
+  @doc """
+  Embed `inputs` in chunks of `batch_size`. Returns the concatenated vectors
+  and merged usage on success, or short-circuits on the first batch error.
+  """
   @spec embed(t(), [String.t()], keyword()) ::
           {:ok, [[float()]], Dsxir.LM.usage()} | {:error, term()}
   def embed(%__MODULE__{batch_size: size}, inputs, opts \\ [])

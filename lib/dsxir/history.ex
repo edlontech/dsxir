@@ -35,6 +35,14 @@ defmodule Dsxir.History do
 
   defstruct [:counter_ref, :max_size, :trim_batch]
 
+  @type t :: %__MODULE__{
+          counter_ref: :counters.counters_ref(),
+          max_size: pos_integer(),
+          trim_batch: pos_integer()
+        }
+
+  @doc "Start the history owner as a named singleton."
+  @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end

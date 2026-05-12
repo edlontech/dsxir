@@ -22,6 +22,11 @@ defmodule Dsxir.Artifact do
 
   @reserved_metadata_key "_metadata"
 
+  @doc """
+  Write `prog` to `path` as pretty JSON. Returns `{:ok, path}` on success or
+  `{:error, exception}` when encoding or I/O fails. The target directory is
+  created if missing.
+  """
   @spec save(Program.t(), Path.t()) :: {:ok, Path.t()} | {:error, Exception.t()}
   def save(%Program{} = prog, path) when is_binary(path) do
     File.mkdir_p!(Path.dirname(path))
@@ -44,6 +49,10 @@ defmodule Dsxir.Artifact do
     end
   end
 
+  @doc """
+  Bang variant of `save/2`. Returns the path on success and raises the
+  underlying exception on failure.
+  """
   @spec save!(Program.t(), Path.t()) :: Path.t()
   def save!(%Program{} = prog, path) when is_binary(path) do
     case save(prog, path) do
@@ -108,6 +117,11 @@ defmodule Dsxir.Artifact do
     Map.new(map, fn {k, v} -> {to_string(k), v} end)
   end
 
+  @doc """
+  Read a saved artifact from `path` and hydrate it into a fresh program for
+  `target_module`. Returns `{:ok, program}` or `{:error, exception}` on read,
+  decode, or structural validation failures.
+  """
   @spec load(module(), Path.t(), keyword()) :: {:ok, Program.t()} | {:error, Exception.t()}
   def load(target_module, path, _opts \\ []) when is_atom(target_module) and is_binary(path) do
     with {:ok, raw} <- File.read(path),
@@ -122,6 +136,10 @@ defmodule Dsxir.Artifact do
     end
   end
 
+  @doc """
+  Bang variant of `load/3`. Returns the program on success and raises the
+  underlying exception on failure.
+  """
   @spec load!(module(), Path.t(), keyword()) :: Program.t()
   def load!(target_module, path, opts \\ []) do
     case load(target_module, path, opts) do

@@ -22,6 +22,11 @@ defmodule Dsxir.Metric do
           (Dsxir.Example.t(), Dsxir.Prediction.t(), nil | list() ->
              number() | boolean())
 
+  @doc """
+  Invoke `metric` and coerce its return into a `float()`. Booleans become
+  `1.0`/`0.0`; integers and floats pass through. Any other return raises
+  `Dsxir.Errors.Invalid.Metric`.
+  """
   @spec apply(t(), Dsxir.Example.t(), Dsxir.Prediction.t(), nil | list()) :: float()
   def apply(metric, %Dsxir.Example{} = example, %Dsxir.Prediction{} = prediction, trace)
       when is_function(metric, 3) do

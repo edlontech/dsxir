@@ -91,7 +91,10 @@ defmodule Dsxir.MultiTenantTest do
     end)
 
     stop_events = drain_stops()
-    tenants_in_events = Enum.map(stop_events, fn {:stop, _, _, meta} -> Map.get(meta, :tenant_id) end)
+
+    tenants_in_events =
+      Enum.map(stop_events, fn {:stop, _, _, meta} -> Map.get(meta, :tenant_id) end)
+
     assert Enum.count(tenants_in_events, &(&1 == "t1")) == 3
     assert Enum.count(tenants_in_events, &(&1 == "t2")) == 3
 

@@ -24,6 +24,11 @@ defmodule Dsxir.Module.Runtime do
   alias Dsxir.Program
   alias Dsxir.Settings
 
+  @doc """
+  Dispatch a predictor call by `name` against `prog`. Runs the configured
+  `call_plugs`, invokes the predictor implementation, records the trace, and
+  returns the updated program with the prediction.
+  """
   @spec call(Program.t(), atom(), map() | keyword(), keyword()) ::
           {Program.t(), Dsxir.Prediction.t()}
   def call(%Program{module: user_module} = prog, name, inputs, opts \\ [])

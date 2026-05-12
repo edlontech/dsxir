@@ -87,20 +87,58 @@ defmodule Dsxir.Telemetry do
   @evaluate_item [:dsxir, :evaluate, :item]
   @evaluate_stop [:dsxir, :evaluate, :stop]
 
+  @type event :: [atom(), ...]
+
+  @doc "Event name for `[:dsxir, :predictor, :start]`."
+  @spec predictor_start() :: event()
   def predictor_start, do: @predictor_start
+
+  @doc "Event name for `[:dsxir, :predictor, :stop]`."
+  @spec predictor_stop() :: event()
   def predictor_stop, do: @predictor_stop
+
+  @doc "Event name for `[:dsxir, :predictor, :exception]`."
+  @spec predictor_exception() :: event()
   def predictor_exception, do: @predictor_exception
+
+  @doc "Event name for `[:dsxir, :adapter, :format]`."
+  @spec adapter_format() :: event()
   def adapter_format, do: @adapter_format
+
+  @doc "Event name for `[:dsxir, :adapter, :parse]`."
+  @spec adapter_parse() :: event()
   def adapter_parse, do: @adapter_parse
+
+  @doc "Event name for `[:dsxir, :adapter, :fallback]`."
+  @spec adapter_fallback() :: event()
   def adapter_fallback, do: @adapter_fallback
+
+  @doc "Event name for `[:dsxir, :optimizer, :start]`."
+  @spec optimizer_start() :: event()
   def optimizer_start, do: @optimizer_start
+
+  @doc "Event name for `[:dsxir, :optimizer, :stop]`."
+  @spec optimizer_stop() :: event()
   def optimizer_stop, do: @optimizer_stop
+
+  @doc "Event name for `[:dsxir, :optimizer, :trial]`."
+  @spec optimizer_trial() :: event()
   def optimizer_trial, do: @optimizer_trial
+
+  @doc "Event name for `[:dsxir, :optimizer, :item_error]`."
+  @spec optimizer_item_error() :: event()
   def optimizer_item_error, do: @optimizer_item_error
+
+  @doc "Event name for `[:dsxir, :evaluate, :item]`."
+  @spec evaluate_item() :: event()
   def evaluate_item, do: @evaluate_item
+
+  @doc "Event name for `[:dsxir, :evaluate, :stop]`."
+  @spec evaluate_stop() :: event()
   def evaluate_stop, do: @evaluate_stop
 
-  @spec emit([atom()], map(), map()) :: :ok
+  @doc "Thin wrapper over `:telemetry.execute/3`."
+  @spec emit(event(), map(), map()) :: :ok
   def emit(event, measurements \\ %{}, metadata \\ %{})
       when is_list(event) and is_map(measurements) and is_map(metadata) do
     :telemetry.execute(event, measurements, metadata)

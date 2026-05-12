@@ -32,6 +32,11 @@ defmodule Dsxir.Errors do
       "Dsxir.Predictor."
     ]
 
+  @doc """
+  Return the splode class of `error` (one of `:halted`, `:invalid`, `:adapter`,
+  `:lm`, `:framework`, `:unknown`). Falls back to `:unknown` when the value is
+  not a classified dsxir error.
+  """
   @spec class_of(any()) :: atom()
   def class_of(%{class: class}) when is_atom(class), do: class
   def class_of(_), do: :unknown
