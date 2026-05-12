@@ -25,6 +25,41 @@ defmodule Dsxir.Test.Fixtures.QA do
     def forward(p, inputs), do: call(p, :answer, inputs)
   end
 
+  defmodule ExtractIntent do
+    @moduledoc "Extract the topical category of the question."
+    use Dsxir.Signature
+
+    signature do
+      input :q, :string
+      output :category, :string
+    end
+  end
+
+  defmodule AnswerWithCategory do
+    @moduledoc "Answer the question, given an inferred category."
+    use Dsxir.Signature
+
+    signature do
+      input :q, :string
+      input :category, :string
+      output :a, :string
+    end
+  end
+
+  defmodule TwoStep do
+    @moduledoc false
+    use Dsxir.Module
+
+    predictor :extract, Dsxir.Predictor.ChainOfThought, signature: ExtractIntent
+    predictor :answer, Dsxir.Predictor.Predict, signature: AnswerWithCategory
+
+    def forward(prog, %{q: q}) do
+      {prog, ex} = call(prog, :extract, %{q: q})
+      {prog, an} = call(prog, :answer, %{q: q, category: ex.fields.category})
+      {prog, an}
+    end
+  end
+
   @qa_pairs [
     {"What is 2 + 2?", "4"},
     {"Capital of France?", "Paris"},
@@ -85,4 +120,15 @@ defmodule Dsxir.Test.Fixtures.QA do
   end
 
   def exact_match(_, _, _), do: false
+
+  @spec exact_match_two_step(Dsxir.Example.t(), Dsxir.Prediction.t(), nil | list()) :: boolean()
+  def exact_match_two_step(
+        %Dsxir.Example{data: %{a: expected}},
+        %Dsxir.Prediction{fields: %{a: actual}},
+        _trace
+      ) do
+    String.downcase(String.trim(actual)) == String.downcase(String.trim(expected))
+  end
+
+  def exact_match_two_step(_, _, _), do: false
 end

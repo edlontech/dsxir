@@ -50,6 +50,21 @@ defmodule Dsxir.Adapter.ChatTest do
       assert user.content =~ "Paris"
       refute user.content =~ "null"
     end
+
+    test "renders %Dsxir.Demo{} demos by unwrapping the wrapped example" do
+      ex =
+        Dsxir.Example.new(%{question: "Capital of France?", answer: "Paris"},
+          input_keys: [:question]
+        )
+
+      demo = Dsxir.Demo.labeled(ex)
+
+      [_system, user] = Chat.format(AnswerQuestion, %{question: "What about Spain?"}, [demo], [])
+
+      assert user.content =~ "Capital of France?"
+      assert user.content =~ "Paris"
+      refute user.content =~ "null"
+    end
   end
 
   describe "parse/3" do

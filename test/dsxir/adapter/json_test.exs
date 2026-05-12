@@ -54,6 +54,21 @@ defmodule Dsxir.Adapter.JsonTest do
       refute user.content =~ "null"
     end
 
+    test "renders %Dsxir.Demo{} demos by unwrapping the wrapped example" do
+      ex =
+        Dsxir.Example.new(%{question: "Capital of France?", answer: "Paris"},
+          input_keys: [:question]
+        )
+
+      demo = Dsxir.Demo.labeled(ex)
+
+      [_system, user] = Json.format(AnswerQuestion, %{question: "What about Spain?"}, [demo], [])
+
+      assert user.content =~ "Capital of France?"
+      assert user.content =~ "Paris"
+      refute user.content =~ "null"
+    end
+
     test "raises Invalid.Configuration when :stream is in opts" do
       err =
         assert_raise Dsxir.Errors.Invalid.Configuration, fn ->

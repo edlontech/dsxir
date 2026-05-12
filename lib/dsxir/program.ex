@@ -12,7 +12,7 @@ defmodule Dsxir.Program do
     defstruct demos: [], instructions_override: nil, signature_override: nil
 
     @type t :: %__MODULE__{
-            demos: list(),
+            demos: [Dsxir.Demo.t() | Dsxir.Example.t()],
             instructions_override: nil | String.t(),
             signature_override: nil | module()
           }

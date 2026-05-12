@@ -84,7 +84,18 @@ defmodule Dsxir.Artifact do
   defp instructions_for(%Program.State{instructions_override: nil}, signature),
     do: SignatureRuntime.instruction(signature)
 
-  defp encode_demo(%Dsxir.Example{data: data}), do: stringify_keys(data)
+  defp encode_demo(%Dsxir.Demo{example: %Dsxir.Example{data: data}, kind: kind}) do
+    data
+    |> stringify_keys()
+    |> Map.put("_kind", Atom.to_string(kind))
+  end
+
+  defp encode_demo(%Dsxir.Example{data: data}) do
+    data
+    |> stringify_keys()
+    |> Map.put("_kind", "labeled")
+  end
+
   defp encode_demo(demo) when is_map(demo), do: stringify_keys(demo)
 
   defp encode_metadata(metadata) do
@@ -155,7 +166,12 @@ defmodule Dsxir.Artifact do
   end
 
   defp demo_keys_in(%{"demos" => demos}) when is_list(demos) do
-    Enum.map(demos, fn demo -> demo |> Map.keys() |> Enum.sort() end)
+    Enum.map(demos, fn demo ->
+      demo
+      |> Map.delete("_kind")
+      |> Map.keys()
+      |> Enum.sort()
+    end)
   end
 
   defp demo_keys_in(_), do: []
@@ -254,8 +270,14 @@ defmodule Dsxir.Artifact do
   end
 
   defp build_demo(demo, input_names) do
-    data = Map.new(demo, &reatomize_key/1)
-    Dsxir.Example.new(data, input_keys: input_names)
+    {kind_string, rest} = Map.pop(demo, "_kind", "labeled")
+    data = Map.new(rest, &reatomize_key/1)
+    example = Dsxir.Example.new(data, input_keys: input_names)
+
+    case kind_string do
+      "bootstrapped" -> %Dsxir.Demo{example: example, kind: :bootstrapped}
+      _ -> %Dsxir.Demo{example: example, kind: :labeled}
+    end
   end
 
   defp reatomize_key({k, v}) do

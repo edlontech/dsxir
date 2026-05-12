@@ -112,7 +112,7 @@ defmodule Dsxir.LM.Sycophant do
     end
   end
 
-  @dsxir_internal_opts [:path, :adapter]
+  @dsxir_internal_opts [:path, :adapter, :cache, :_dsxir_nonce]
   @credential_opts [:api_key, :base_url, :headers]
 
   defp build_sycophant_opts(config, opts) do

@@ -93,9 +93,11 @@ defmodule Dsxir.Optimizer.LabeledFewShot do
   defp pick(trainset, max, false), do: Enum.take_random(trainset, max)
 
   defp slot_demos_for_all(%Program{predictors: predictors} = prog, demos) do
+    wrapped = Enum.map(demos, &Dsxir.Demo.labeled/1)
+
     updated =
       Map.new(predictors, fn {name, %Program.State{} = state} ->
-        {name, %{state | demos: demos}}
+        {name, %{state | demos: wrapped}}
       end)
 
     %{prog | predictors: updated}

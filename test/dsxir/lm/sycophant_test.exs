@@ -232,6 +232,24 @@ defmodule Dsxir.LM.SycophantTest do
     )
   end
 
+  test ":cache and :_dsxir_nonce are stripped before forwarding to Sycophant" do
+    expect(Sycophant, :generate_text, fn _model, _msgs, sycophant_opts ->
+      refute Keyword.has_key?(sycophant_opts, :cache)
+      refute Keyword.has_key?(sycophant_opts, :_dsxir_nonce)
+      assert sycophant_opts[:temperature] == 1.0
+      {:ok, %Sycophant.Response{text: "ok", context: %Sycophant.Context{messages: []}}}
+    end)
+
+    assert {:ok, "ok", _usage} =
+             Impl.generate_text(
+               [model: "openai:gpt-4o-mini"],
+               [],
+               cache: false,
+               _dsxir_nonce: 42,
+               temperature: 1.0
+             )
+  end
+
   describe "generate_object/4" do
     test "returns {:ok, object, usage} on success" do
       usage = %Sycophant.Usage{input_tokens: 7, output_tokens: 11, total_cost: 0.0002}

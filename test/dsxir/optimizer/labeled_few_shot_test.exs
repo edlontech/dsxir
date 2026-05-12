@@ -56,6 +56,7 @@ defmodule Dsxir.Optimizer.LabeledFewShotTest do
 
     state = Program.get_state(compiled, :answer)
     assert length(state.demos) == 5
+    assert Enum.all?(state.demos, &match?(%Dsxir.Demo{kind: :labeled}, &1))
   end
 
   test "max_labeled_demos > length(trainset) clamps to trainset size" do

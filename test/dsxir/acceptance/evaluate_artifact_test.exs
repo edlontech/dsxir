@@ -72,7 +72,7 @@ defmodule Dsxir.Acceptance.EvaluateArtifactTest do
     rendered = Enum.map_join(messages, "\n", & &1.content)
 
     Enum.each(restored.predictors[:answer].demos, fn demo ->
-      assert rendered =~ demo.data[:q]
+      assert rendered =~ demo.example.data[:q]
     end)
   end
 

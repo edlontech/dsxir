@@ -35,6 +35,39 @@ defmodule Dsxir.Telemetry do
   always-present-nil convention when relayed from the upstream LM impl. Until
   that wiring lands, those keys are absent from emitted measurements — once
   they appear they will follow the convention.
+
+  ## Optimizer events
+
+  `[:dsxir, :optimizer, :start]`
+
+    * **Measurements:** `%{system_time: integer()}`.
+    * **Metadata:** `%{optimizer: module(), trainset_size: non_neg_integer(), error_class: nil}`.
+
+  `[:dsxir, :optimizer, :stop]`
+
+    * **Measurements:** `%{duration: integer(), score: nil | float()}`. `score` is
+      `nil` for optimizers that do not compute a holdout score during compile
+      (e.g. `Dsxir.Optimizer.LabeledFewShot`, `Dsxir.Optimizer.BootstrapFewShot`);
+      future optimizers (MIPROv2, GEPA) may populate it.
+    * **Metadata:** `%{optimizer: module(), trainset_size: non_neg_integer(),
+      error_class: nil | atom()}`. `error_class` is `nil` on success and the
+      aggregated error class atom on failure.
+
+  `[:dsxir, :optimizer, :trial]`
+
+    * **Measurements:** `%{score: float()}`. Coerced metric value for the trial.
+    * **Metadata:** `%{optimizer: module(), round: pos_integer(),
+      example_index: non_neg_integer(), kept: boolean(), error_class: nil}`.
+
+  `[:dsxir, :optimizer, :item_error]`
+
+    * **Measurements:** `%{system_time: integer()}`.
+    * **Metadata:** `%{optimizer: module(), round: pos_integer(),
+      example_index: non_neg_integer(), error: Exception.t(),
+      error_class: atom()}`.
+
+  Subscribers branch on `nil` for `score` and `error_class`; never on
+  `Map.has_key?/2`.
   """
 
   @predictor_start [:dsxir, :predictor, :start]

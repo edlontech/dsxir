@@ -52,10 +52,33 @@ defmodule Dsxir.ArtifactSaveTest do
     Enum.each(encoded["answer"]["demos"], fn demo ->
       assert is_binary(demo["q"])
       assert is_binary(demo["a"])
+      assert demo["_kind"] == "labeled"
     end)
 
     assert encoded["_metadata"]["compiled_with"] == "Elixir.Dsxir.Optimizer.LabeledFewShot"
     assert is_binary(encoded["_metadata"]["trainset_hash"])
+  end
+
+  test "encodes %Dsxir.Demo{kind: :bootstrapped} demos with _kind => bootstrapped" do
+    demo = Dsxir.Demo.bootstrapped(ex("q1", "a1"), %{round: 1, example_index: 0})
+
+    prog = %Program{
+      module: Prog,
+      predictors: %{answer: %Program.State{demos: [demo]}}
+    }
+
+    encoded = Artifact.encode(prog)
+    assert [%{"q" => "q1", "a" => "a1", "_kind" => "bootstrapped"}] = encoded["answer"]["demos"]
+  end
+
+  test "encodes bare %Dsxir.Example{} demos with _kind => labeled" do
+    prog = %Program{
+      module: Prog,
+      predictors: %{answer: %Program.State{demos: [ex("q1", "a1")]}}
+    }
+
+    encoded = Artifact.encode(prog)
+    assert [%{"q" => "q1", "a" => "a1", "_kind" => "labeled"}] = encoded["answer"]["demos"]
   end
 
   @tag :tmp_dir

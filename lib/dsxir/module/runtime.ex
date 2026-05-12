@@ -24,6 +24,7 @@ defmodule Dsxir.Module.Runtime do
         nested_opts = Keyword.put(opts, :path, parent_path ++ [name])
         merged_opts = Keyword.merge(per_call_opts_from_settings(), nested_opts)
         {new_state, prediction} = impl.forward(state, signature, inputs_map, merged_opts)
+        Dsxir.Trace.record({name, inputs_map, prediction, state.demos})
         {Program.put_state(prog, name, new_state), prediction}
 
       nil ->
