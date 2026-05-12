@@ -5,6 +5,7 @@ defmodule Dsxir.Predictor.ParallelTest do
   alias Dsxir.Predictor.Parallel
   alias Dsxir.Program
   alias Dsxir.Test.Fixtures.ThreePredictors
+  alias Dsxir.Test.TelemetryHandler
 
   setup :set_mimic_global
 
@@ -26,8 +27,8 @@ defmodule Dsxir.Predictor.ParallelTest do
     :telemetry.attach(
       handler_id,
       Dsxir.Telemetry.predictor_stop(),
-      fn _e, _meas, meta, _ -> send(parent, {:telemetry_stop, meta}) end,
-      nil
+      &TelemetryHandler.forward/4,
+      %{parent: parent, tag: :telemetry_stop}
     )
 
     Dsxir.Settings.context(
@@ -50,7 +51,7 @@ defmodule Dsxir.Predictor.ParallelTest do
     )
 
     for _ <- 1..3 do
-      assert_receive {:telemetry_stop, %{tenant_id: "t1"}}, 1000
+      assert_receive {:telemetry_stop, _, _, %{tenant_id: "t1"}}, 1000
     end
   end
 

@@ -112,11 +112,14 @@ defmodule Dsxir.LM.Sycophant do
     end
   end
 
+  @dsxir_internal_opts [:path, :adapter]
+  @credential_opts [:api_key, :base_url, :headers]
+
   defp build_sycophant_opts(config, opts) do
     merged = Keyword.merge(Keyword.delete(config, :model), opts)
 
     merged
-    |> Keyword.drop([:api_key, :base_url, :headers])
+    |> Keyword.drop(@credential_opts ++ @dsxir_internal_opts)
     |> maybe_put_credentials(merged)
   end
 

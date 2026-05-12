@@ -5,6 +5,7 @@ defmodule Dsxir.Adapter.ChatTest do
   alias Dsxir.Telemetry
   alias Dsxir.Test.Fixtures.AnswerQuestion
   alias Dsxir.Test.Fixtures.RankItems
+  alias Dsxir.Test.TelemetryHandler
 
   describe "format/4" do
     test "renders system + user messages for a single-input signature" do
@@ -35,6 +36,19 @@ defmodule Dsxir.Adapter.ChatTest do
       assert user.content =~ "Capital of France?"
       assert user.content =~ "Paris"
       assert user.content =~ "Now your turn:"
+    end
+
+    test "renders %Dsxir.Example{} demos by unwrapping their data map" do
+      demo =
+        Dsxir.Example.new(%{question: "Capital of France?", answer: "Paris"},
+          input_keys: [:question]
+        )
+
+      [_system, user] = Chat.format(AnswerQuestion, %{question: "What about Spain?"}, [demo], [])
+
+      assert user.content =~ "Capital of France?"
+      assert user.content =~ "Paris"
+      refute user.content =~ "null"
     end
   end
 
@@ -142,8 +156,8 @@ defmodule Dsxir.Adapter.ChatTest do
         :telemetry.attach_many(
           handler_id,
           [Telemetry.adapter_format(), Telemetry.adapter_parse()],
-          fn event, meas, meta, _ -> send(parent, {ref, event, meas, meta}) end,
-          nil
+          &TelemetryHandler.forward/4,
+          %{parent: parent, tag: ref}
         )
 
       try do
@@ -189,14 +203,14 @@ defmodule Dsxir.Adapter.ChatTest do
         :telemetry.attach(
           handler_id,
           Telemetry.adapter_parse(),
-          fn _event, meas, meta, _ -> send(parent, {ref, meas, meta}) end,
-          nil
+          &TelemetryHandler.forward/4,
+          %{parent: parent, tag: ref}
         )
 
       try do
         assert {:error, _} = Chat.parse(RankItems, "totally malformed, no markers", [])
 
-        assert_receive {^ref, %{duration: duration},
+        assert_receive {^ref, _, %{duration: duration},
                         %{
                           adapter: Dsxir.Adapter.Chat,
                           signature: RankItems,
@@ -219,8 +233,8 @@ defmodule Dsxir.Adapter.ChatTest do
         :telemetry.attach_many(
           handler_id,
           [Telemetry.adapter_format(), Telemetry.adapter_parse()],
-          fn event, _meas, meta, _ -> send(parent, {ref, event, meta}) end,
-          nil
+          &TelemetryHandler.forward/4,
+          %{parent: parent, tag: ref}
         )
 
       try do
@@ -229,8 +243,8 @@ defmodule Dsxir.Adapter.ChatTest do
           Chat.parse(AnswerQuestion, "[[ ## answer ## ]]\nhi", [])
         end)
 
-        assert_receive {^ref, [:dsxir, :adapter, :format], %{tenant_id: "t-42"}}, 200
-        assert_receive {^ref, [:dsxir, :adapter, :parse], %{tenant_id: "t-42"}}, 200
+        assert_receive {^ref, [:dsxir, :adapter, :format], _, %{tenant_id: "t-42"}}, 200
+        assert_receive {^ref, [:dsxir, :adapter, :parse], _, %{tenant_id: "t-42"}}, 200
       after
         :telemetry.detach(handler_id)
       end

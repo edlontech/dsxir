@@ -144,6 +144,8 @@ defmodule Dsxir.Adapter.Json do
     "#{label}\n#{bullets}"
   end
 
+  defp render_demo(signature, %Dsxir.Example{data: data}), do: render_demo(signature, data)
+
   defp render_demo(signature, demo) when is_map(demo) do
     Runtime.fields(signature)
     |> Enum.map_join("\n", fn f ->

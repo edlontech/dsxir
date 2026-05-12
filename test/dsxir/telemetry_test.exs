@@ -1,6 +1,8 @@
 defmodule Dsxir.TelemetryTest do
   use ExUnit.Case, async: true
 
+  alias Dsxir.Test.TelemetryHandler
+
   test "emit/3 fires :telemetry.execute on the documented event name" do
     parent = self()
     ref = make_ref()
@@ -11,15 +13,13 @@ defmodule Dsxir.TelemetryTest do
       :telemetry.attach(
         handler_id,
         event,
-        fn ^event, measurements, metadata, _ ->
-          send(parent, {ref, measurements, metadata})
-        end,
-        nil
+        &TelemetryHandler.forward/4,
+        %{parent: parent, tag: ref}
       )
 
     try do
       Dsxir.Telemetry.emit(event, %{duration: 1}, %{tag: :sentinel})
-      assert_receive {^ref, %{duration: 1}, %{tag: :sentinel}}, 200
+      assert_receive {^ref, ^event, %{duration: 1}, %{tag: :sentinel}}, 200
     after
       :telemetry.detach(handler_id)
     end

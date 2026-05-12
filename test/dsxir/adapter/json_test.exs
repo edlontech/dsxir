@@ -5,6 +5,7 @@ defmodule Dsxir.Adapter.JsonTest do
   alias Dsxir.Telemetry
   alias Dsxir.Test.Fixtures.AnswerQuestion
   alias Dsxir.Test.Fixtures.RankItems
+  alias Dsxir.Test.TelemetryHandler
 
   describe "lm_mode/0" do
     test "returns :object" do
@@ -40,6 +41,19 @@ defmodule Dsxir.Adapter.JsonTest do
       assert user.content =~ "What is Elixir?"
     end
 
+    test "renders %Dsxir.Example{} demos by unwrapping their data map" do
+      demo =
+        Dsxir.Example.new(%{question: "Capital of France?", answer: "Paris"},
+          input_keys: [:question]
+        )
+
+      [_system, user] = Json.format(AnswerQuestion, %{question: "What about Spain?"}, [demo], [])
+
+      assert user.content =~ "Capital of France?"
+      assert user.content =~ "Paris"
+      refute user.content =~ "null"
+    end
+
     test "raises Invalid.Configuration when :stream is in opts" do
       err =
         assert_raise Dsxir.Errors.Invalid.Configuration, fn ->
@@ -60,14 +74,14 @@ defmodule Dsxir.Adapter.JsonTest do
         :telemetry.attach(
           handler_id,
           Telemetry.adapter_format(),
-          fn _event, meas, meta, _ -> send(parent, {ref, meas, meta}) end,
-          nil
+          &TelemetryHandler.forward/4,
+          %{parent: parent, tag: ref}
         )
 
       try do
         Json.format(AnswerQuestion, %{question: "x"}, [], [])
 
-        assert_receive {^ref, %{duration: duration},
+        assert_receive {^ref, _, %{duration: duration},
                         %{
                           adapter: Dsxir.Adapter.Json,
                           signature: AnswerQuestion,
@@ -111,14 +125,14 @@ defmodule Dsxir.Adapter.JsonTest do
         :telemetry.attach(
           handler_id,
           Telemetry.adapter_parse(),
-          fn _event, meas, meta, _ -> send(parent, {ref, meas, meta}) end,
-          nil
+          &TelemetryHandler.forward/4,
+          %{parent: parent, tag: ref}
         )
 
       try do
         assert {:ok, _} = Json.parse(AnswerQuestion, %{answer: "ok"}, [])
 
-        assert_receive {^ref, %{duration: duration},
+        assert_receive {^ref, _, %{duration: duration},
                         %{
                           adapter: Dsxir.Adapter.Json,
                           signature: AnswerQuestion,
@@ -141,15 +155,15 @@ defmodule Dsxir.Adapter.JsonTest do
         :telemetry.attach(
           handler_id,
           Telemetry.adapter_parse(),
-          fn _event, meas, meta, _ -> send(parent, {ref, meas, meta}) end,
-          nil
+          &TelemetryHandler.forward/4,
+          %{parent: parent, tag: ref}
         )
 
       try do
         assert {:error, _} =
                  Json.parse(RankItems, %{ranked: "not-a-list", confidence: 0.5}, [])
 
-        assert_receive {^ref, %{duration: _}, %{outcome: :error}}, 200
+        assert_receive {^ref, _, %{duration: _}, %{outcome: :error}}, 200
       after
         :telemetry.detach(handler_id)
       end

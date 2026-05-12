@@ -217,6 +217,21 @@ defmodule Dsxir.LM.SycophantTest do
     )
   end
 
+  test "drops dsxir-internal opts (:path, :adapter) from sycophant opts" do
+    expect(Sycophant, :generate_text, fn _model, _msgs, opts ->
+      refute Keyword.has_key?(opts, :path)
+      refute Keyword.has_key?(opts, :adapter)
+      {:ok, %Sycophant.Response{text: "ok", context: %Sycophant.Context{messages: []}}}
+    end)
+
+    Impl.generate_text(
+      [model: "m"],
+      [],
+      path: [:extract_actions, :action_items],
+      adapter: Dsxir.Adapter.Chat
+    )
+  end
+
   describe "generate_object/4" do
     test "returns {:ok, object, usage} on success" do
       usage = %Sycophant.Usage{input_tokens: 7, output_tokens: 11, total_cost: 0.0002}

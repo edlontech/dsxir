@@ -4,6 +4,7 @@ defmodule Dsxir.Predictor.PredictTest do
 
   alias Dsxir.Predictor.Predict
   alias Dsxir.Test.Fixtures.AnswerQuestion
+  alias Dsxir.Test.TelemetryHandler
 
   setup :set_mimic_from_context
 
@@ -50,8 +51,8 @@ defmodule Dsxir.Predictor.PredictTest do
         Dsxir.Telemetry.predictor_start(),
         Dsxir.Telemetry.predictor_stop()
       ],
-      fn event, meas, meta, _ -> send(parent, {:telemetry, event, meas, meta}) end,
-      nil
+      &TelemetryHandler.forward/4,
+      %{parent: parent, tag: :telemetry}
     )
 
     Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
@@ -82,15 +83,16 @@ defmodule Dsxir.Predictor.PredictTest do
     :telemetry.attach(
       handler_id,
       Dsxir.Telemetry.predictor_stop(),
-      fn _e, meas, _meta, _ -> send(parent, {:telemetry_stop, meas}) end,
-      nil
+      &TelemetryHandler.forward/4,
+      %{parent: parent, tag: :telemetry_stop}
     )
 
     Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
       Predict.forward(%Dsxir.Program.State{}, AnswerQuestion, %{question: "x"}, [])
     end)
 
-    assert_receive {:telemetry_stop, %{duration: _, tokens_in: 12, tokens_out: 34, cost: 0.0005}}
+    assert_receive {:telemetry_stop, _,
+                    %{duration: _, tokens_in: 12, tokens_out: 34, cost: 0.0005}, _}
   end
 
   test "forward/4 stop event carries nil token measurements when LM returns empty usage" do
@@ -106,16 +108,16 @@ defmodule Dsxir.Predictor.PredictTest do
     :telemetry.attach(
       handler_id,
       Dsxir.Telemetry.predictor_stop(),
-      fn _e, meas, _meta, _ -> send(parent, {:telemetry_stop, meas}) end,
-      nil
+      &TelemetryHandler.forward/4,
+      %{parent: parent, tag: :telemetry_stop}
     )
 
     Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
       Predict.forward(%Dsxir.Program.State{}, AnswerQuestion, %{question: "x"}, [])
     end)
 
-    assert_receive {:telemetry_stop,
-                    %{duration: _, tokens_in: nil, tokens_out: nil, cost: nil} = meas}
+    assert_receive {:telemetry_stop, _,
+                    %{duration: _, tokens_in: nil, tokens_out: nil, cost: nil} = meas, _}
 
     assert Map.has_key?(meas, :tokens_in)
     assert Map.has_key?(meas, :tokens_out)
@@ -135,8 +137,8 @@ defmodule Dsxir.Predictor.PredictTest do
     :telemetry.attach(
       handler_id,
       Dsxir.Telemetry.predictor_stop(),
-      fn _e, _m, meta, _ -> send(parent, {:telemetry, meta}) end,
-      nil
+      &TelemetryHandler.forward/4,
+      %{parent: parent, tag: :telemetry}
     )
 
     Dsxir.Settings.context(
@@ -149,7 +151,7 @@ defmodule Dsxir.Predictor.PredictTest do
       end
     )
 
-    assert_receive {:telemetry, %{tenant_id: "t1"}}
+    assert_receive {:telemetry, _, _, %{tenant_id: "t1"}}
   end
 
   test "forward/4 raises Adapter.ParseError when Chat parse fails and Json fallback also fails" do
@@ -181,8 +183,8 @@ defmodule Dsxir.Predictor.PredictTest do
     :telemetry.attach(
       handler_id,
       Dsxir.Telemetry.predictor_exception(),
-      fn _e, _m, meta, _ -> send(parent, {:telemetry, meta}) end,
-      nil
+      &TelemetryHandler.forward/4,
+      %{parent: parent, tag: :telemetry}
     )
 
     Dsxir.Settings.context(
@@ -194,7 +196,7 @@ defmodule Dsxir.Predictor.PredictTest do
       end
     )
 
-    assert_receive {:telemetry, %{error_class: :adapter, kind: :error}}
+    assert_receive {:telemetry, _, _, %{error_class: :adapter, kind: :error}}
   end
 
   test "forward/4 raises LM.Authentication when transport fails" do
@@ -305,8 +307,8 @@ defmodule Dsxir.Predictor.PredictTest do
       :telemetry.attach(
         handler_id,
         Dsxir.Telemetry.adapter_fallback(),
-        fn _e, _meas, meta, _ -> send(parent, {:fallback, meta}) end,
-        nil
+        &TelemetryHandler.forward/4,
+        %{parent: parent, tag: :fallback}
       )
 
       Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
@@ -319,7 +321,7 @@ defmodule Dsxir.Predictor.PredictTest do
         assert prediction[:answer] == "42"
       end)
 
-      assert_receive {:fallback,
+      assert_receive {:fallback, _, _,
                       %{
                         from: Dsxir.Adapter.Chat,
                         to: Dsxir.Adapter.Json,
@@ -379,8 +381,8 @@ defmodule Dsxir.Predictor.PredictTest do
       :telemetry.attach(
         handler_id,
         Dsxir.Telemetry.adapter_fallback(),
-        fn _e, _meas, meta, _ -> send(parent, {:fallback, meta}) end,
-        nil
+        &TelemetryHandler.forward/4,
+        %{parent: parent, tag: :fallback}
       )
 
       Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
@@ -390,7 +392,7 @@ defmodule Dsxir.Predictor.PredictTest do
         assert prediction[:answer] == "ok"
       end)
 
-      assert_receive {:fallback,
+      assert_receive {:fallback, _, _,
                       %{
                         from: Dsxir.Adapter.Chat,
                         to: Dsxir.Adapter.Json,
@@ -410,8 +412,8 @@ defmodule Dsxir.Predictor.PredictTest do
       :telemetry.attach(
         handler_id,
         Dsxir.Telemetry.adapter_fallback(),
-        fn _e, _meas, meta, _ -> send(parent, {:fallback, meta}) end,
-        nil
+        &TelemetryHandler.forward/4,
+        %{parent: parent, tag: :fallback}
       )
 
       Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
@@ -420,7 +422,7 @@ defmodule Dsxir.Predictor.PredictTest do
         end
       end)
 
-      refute_receive {:fallback, _}, 50
+      refute_receive {:fallback, _, _, _}, 50
     end
 
     test "Json primary failure propagates without fallback" do
@@ -435,8 +437,8 @@ defmodule Dsxir.Predictor.PredictTest do
       :telemetry.attach(
         handler_id,
         Dsxir.Telemetry.adapter_fallback(),
-        fn _e, _meas, meta, _ -> send(parent, {:fallback, meta}) end,
-        nil
+        &TelemetryHandler.forward/4,
+        %{parent: parent, tag: :fallback}
       )
 
       Dsxir.Settings.context(
@@ -451,7 +453,7 @@ defmodule Dsxir.Predictor.PredictTest do
         end
       )
 
-      refute_receive {:fallback, _}, 50
+      refute_receive {:fallback, _, _, _}, 50
     end
   end
 
