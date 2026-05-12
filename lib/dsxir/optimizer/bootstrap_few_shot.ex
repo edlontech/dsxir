@@ -61,9 +61,9 @@ defmodule Dsxir.Optimizer.BootstrapFewShot do
   `path: [:bootstrap_few_shot, :"round_R", :"example_I"]`. When
   `error_count > max_errors`, `compile/4` returns
   `{:error, %Dsxir.Errors.Framework.OptimizerError{optimizer: __MODULE__,
-  inner: aggregate}}` where `inner` is an aggregate produced via
-  `Dsxir.Errors.to_class/2`. Callers can `Dsxir.Errors.traverse_errors/2` to
-  extract per-predictor sub-errors.
+  inner: aggregate}}` where `inner` is an aggregate produced via Splode's
+  `to_class` helper on `Dsxir.Errors`. Callers can traverse per-predictor
+  sub-errors via Splode's `traverse_errors` helper.
 
   ## Trainset hash
 

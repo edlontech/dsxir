@@ -4,7 +4,7 @@ defmodule Dsxir.Errors.Framework do
 end
 
 defmodule Dsxir.Errors.Framework.PredictorError do
-  @moduledoc false
+  @moduledoc "Raised when an internal predictor invariant fails (timeout, trajectory overshoot, etc.)."
   use Splode.Error,
     fields: [:predictor, :signature, :inner, :reason, :trajectory],
     class: :framework
@@ -15,7 +15,7 @@ defmodule Dsxir.Errors.Framework.PredictorError do
 end
 
 defmodule Dsxir.Errors.Framework.OptimizerError do
-  @moduledoc false
+  @moduledoc "Raised when an optimizer aggregates more per-example errors than `:max_errors` allows."
   use Splode.Error, fields: [:optimizer, :inner], class: :framework
 
   def message(%{optimizer: optimizer, inner: inner}) do

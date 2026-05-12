@@ -22,6 +22,9 @@ defmodule Dsxir.Adapter do
   @callback parse(signature(), lm_response() | map(), keyword()) ::
               {:ok, map()} | {:error, adapter_error()}
   @callback lm_mode() :: :text | :object
+  @callback format_and_call(signature(), map(), list(), keyword()) ::
+              {:ok, map(), Dsxir.LM.usage(), term()}
+              | {:fallback, Exception.t()}
 
-  @optional_callbacks [lm_mode: 0]
+  @optional_callbacks [lm_mode: 0, format_and_call: 4]
 end

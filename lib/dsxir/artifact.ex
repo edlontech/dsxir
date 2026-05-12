@@ -13,10 +13,6 @@ defmodule Dsxir.Artifact do
   `save/2` writes one program. `load/3` reads one program into a target module
   and validates the artifact's predictor + field shape against the target's
   signatures, raising `Dsxir.Errors.Invalid.SignatureMismatch` on any drift.
-
-  Compatibility is pinned to a recorded DSPy version; the version and parity
-  notes will be recorded in a forthcoming `examples/meeting_notes/COMPATIBILITY.md`.
-  This module is not a DSPy artifact parser for arbitrary upstream versions.
   """
 
   alias Dsxir.Errors

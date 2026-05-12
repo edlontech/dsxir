@@ -26,6 +26,12 @@ defmodule Dsxir.Predictor.Predict do
   second class-matched failure raises
   `Dsxir.Errors.Adapter.FallbackExhausted`.
 
+  `FallbackExhausted` can surface from two sources: the Chat→Json fallback
+  (handled here, distinguished by `from: Dsxir.Adapter.Chat, to:
+  Dsxir.Adapter.Json`) and the Json→Json schema retry (handled internally by
+  `Dsxir.Adapter.Json`, distinguished by `from: Dsxir.Adapter.Json, to:
+  Dsxir.Adapter.Json`). The rescue list catches both.
+
   ## Recognised opts
 
     * `:adapter` — override the adapter module for this call. Defaults to
@@ -125,37 +131,27 @@ defmodule Dsxir.Predictor.Predict do
   end
 
   defp run_adapter(state, signature, inputs, adapter, opts) do
+    case adapter_lm_mode(adapter) do
+      :object -> adapter.format_and_call(signature, inputs, state.demos, opts)
+      _ -> run_text_adapter(state, signature, inputs, adapter, opts)
+    end
+  end
+
+  defp run_text_adapter(state, signature, inputs, adapter, opts) do
     messages = adapter.format(signature, inputs, state.demos, opts)
-    mode = adapter_lm_mode(adapter)
 
-    lm_result =
-      case mode do
-        :object ->
-          schema = Dsxir.Adapter.Json.output_schema(signature)
-          Dsxir.LM.generate_object(messages, schema, opts)
+    case Dsxir.LM.generate_text(messages, opts) do
+      {:ok, payload, usage} -> parse_text_response(adapter, signature, payload, usage, opts)
+      {:error, %Dsxir.Errors.LM.ContextWindow{} = err} -> {:fallback, err}
+      {:error, err} -> raise err
+    end
+  end
 
-        _ ->
-          Dsxir.LM.generate_text(messages, opts)
-      end
-
-    case lm_result do
-      {:ok, payload, usage} ->
-        case adapter.parse(signature, payload, opts) do
-          {:ok, fields} ->
-            {:ok, fields, usage, payload}
-
-          {:error, %{class: :adapter} = err} ->
-            {:fallback, err}
-
-          {:error, err} ->
-            raise err
-        end
-
-      {:error, %Dsxir.Errors.LM.ContextWindow{} = err} ->
-        {:fallback, err}
-
-      {:error, err} ->
-        raise err
+  defp parse_text_response(adapter, signature, payload, usage, opts) do
+    case adapter.parse(signature, payload, opts) do
+      {:ok, fields} -> {:ok, fields, usage, payload}
+      {:error, %{class: :adapter} = err} -> {:fallback, err}
+      {:error, err} -> raise err
     end
   end
 

@@ -159,7 +159,7 @@ defmodule Dsxir.Predictor.PredictTest do
       {:ok, "no markers here", Dsxir.LM.empty_usage()}
     end)
 
-    expect(Dsxir.LM.Sycophant, :generate_object, fn _, _, _, _ ->
+    stub(Dsxir.LM.Sycophant, :generate_object, fn _, _, _, _ ->
       {:ok, %{wrong_key: "x"}, Dsxir.LM.empty_usage()}
     end)
 
@@ -171,7 +171,7 @@ defmodule Dsxir.Predictor.PredictTest do
   end
 
   test "forward/4 emits exception telemetry on parse error" do
-    expect(Dsxir.LM.Sycophant, :generate_object, fn _, _, _, _ ->
+    stub(Dsxir.LM.Sycophant, :generate_object, fn _, _, _, _ ->
       {:ok, %{wrong_key: "x"}, Dsxir.LM.empty_usage()}
     end)
 
@@ -190,7 +190,7 @@ defmodule Dsxir.Predictor.PredictTest do
     Dsxir.Settings.context(
       [lm: {Dsxir.LM.Sycophant, [model: "stub"]}, adapter: Dsxir.Adapter.Json],
       fn ->
-        assert_raise Dsxir.Errors.Adapter.ZoiValidation, fn ->
+        assert_raise Dsxir.Errors.Adapter.FallbackExhausted, fn ->
           Predict.forward(%Dsxir.Program.State{}, AnswerQuestion, %{question: "x"}, [])
         end
       end
@@ -211,8 +211,8 @@ defmodule Dsxir.Predictor.PredictTest do
     end)
   end
 
-  test "forward/4 stamps parent path onto ZoiValidation raised from Json adapter" do
-    expect(Dsxir.LM.Sycophant, :generate_object, fn _, _, _, _ ->
+  test "forward/4 stamps parent path onto FallbackExhausted raised from Json adapter retry" do
+    stub(Dsxir.LM.Sycophant, :generate_object, fn _, _, _, _ ->
       {:ok, %{wrong_key: "x"}, Dsxir.LM.empty_usage()}
     end)
 
@@ -225,12 +225,17 @@ defmodule Dsxir.Predictor.PredictTest do
               path: [:run, :extract]
             )
 
-            flunk("expected ZoiValidation")
+            flunk("expected FallbackExhausted")
           rescue
-            e in Dsxir.Errors.Adapter.ZoiValidation -> e
+            e in Dsxir.Errors.Adapter.FallbackExhausted -> e
           end
 
-        assert %Dsxir.Errors.Adapter.ZoiValidation{path: [:run, :extract]} = err
+        assert %Dsxir.Errors.Adapter.FallbackExhausted{
+                 from: Dsxir.Adapter.Json,
+                 to: Dsxir.Adapter.Json,
+                 path: [:run, :extract],
+                 last_error: %Dsxir.Errors.Adapter.ZoiValidation{}
+               } = err
       end
     )
   end
@@ -425,8 +430,8 @@ defmodule Dsxir.Predictor.PredictTest do
       refute_receive {:fallback, _, _, _}, 50
     end
 
-    test "Json primary failure propagates without fallback" do
-      expect(Dsxir.LM.Sycophant, :generate_object, fn _config, _msgs, _schema, _opts ->
+    test "Json primary failure does not trigger a Chat->Json fallback" do
+      stub(Dsxir.LM.Sycophant, :generate_object, fn _config, _msgs, _schema, _opts ->
         {:ok, %{wrong_key: "not an answer"}, Dsxir.LM.empty_usage()}
       end)
 
@@ -447,13 +452,24 @@ defmodule Dsxir.Predictor.PredictTest do
           adapter: Dsxir.Adapter.Json
         ],
         fn ->
-          assert_raise Dsxir.Errors.Adapter.ZoiValidation, fn ->
-            Predict.forward(%Dsxir.Program.State{}, AnswerQuestion, %{question: "x"}, [])
-          end
+          err =
+            try do
+              Predict.forward(%Dsxir.Program.State{}, AnswerQuestion, %{question: "x"}, [])
+              flunk("expected FallbackExhausted")
+            rescue
+              e in Dsxir.Errors.Adapter.FallbackExhausted -> e
+            end
+
+          assert %Dsxir.Errors.Adapter.FallbackExhausted{
+                   from: Dsxir.Adapter.Json,
+                   to: Dsxir.Adapter.Json,
+                   last_error: %Dsxir.Errors.Adapter.ZoiValidation{}
+                 } = err
         end
       )
 
-      refute_receive {:fallback, _, _, _}, 50
+      refute_receive {:fallback, _, _, %{from: Dsxir.Adapter.Chat, to: Dsxir.Adapter.Json}}, 50
+      assert_receive {:fallback, _, _, %{from: Dsxir.Adapter.Json, to: Dsxir.Adapter.Json}}
     end
   end
 

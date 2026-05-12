@@ -32,3 +32,14 @@ defmodule Dsxir.Test.Fixtures.ChainOfThoughtProgram do
     call(prog, :think, %{question: q})
   end
 end
+
+defmodule Dsxir.Test.Fixtures.RankProgram do
+  @moduledoc false
+  use Dsxir.Module
+
+  predictor :rank, Dsxir.Predictor.Predict, signature: Dsxir.Test.Fixtures.RankItems
+
+  def forward(prog, %{query: q, items: items}) do
+    call(prog, :rank, %{query: q, items: items})
+  end
+end

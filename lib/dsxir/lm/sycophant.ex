@@ -2,11 +2,14 @@ defmodule Dsxir.LM.Sycophant do
   @moduledoc """
   Sycophant-backed implementation of the `Dsxir.LM` behaviour.
 
-  Config shape: `[model: "openai:gpt-4o-mini", api_key: nil | binary,
-  base_url: nil | binary, temperature: float, max_tokens: integer,
-  top_p: float, num_retries: integer]`. Unknown config keys pass through to
-  Sycophant; Sycophant validates them against the resolved wire protocol's
-  param schema.
+  Config shape:
+
+      [model: "openai:gpt-4o-mini", api_key: nil | binary,
+       base_url: nil | binary, temperature: float, max_tokens: integer,
+       top_p: float, num_retries: integer]
+
+  Unknown config keys pass through to Sycophant; Sycophant validates them
+  against the resolved wire protocol's param schema.
 
   Per-call opts override per-config opts via `Keyword.merge/2`. `api_key` and
   `base_url` are lifted into `credentials: %{...}` for Sycophant. The `:headers`
@@ -51,7 +54,7 @@ defmodule Dsxir.LM.Sycophant do
   When any of those match the body, the error becomes a
   `Dsxir.Errors.LM.ContextWindow` (with `prompt_tokens`/`limit` extracted when
   the body carries them). All other BadRequest bodies stay as
-  `Dsxir.Errors.LM.RequestFailed{status: 400}`.
+  `Dsxir.Errors.LM.RequestFailed` with `status: 400`.
   """
 
   @behaviour Dsxir.LM

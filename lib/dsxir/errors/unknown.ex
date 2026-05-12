@@ -4,7 +4,7 @@ defmodule Dsxir.Errors.Unknown do
 end
 
 defmodule Dsxir.Errors.Unknown.Unknown do
-  @moduledoc false
+  @moduledoc "Splode fallback for errors that cannot be classified into the other five classes."
   use Splode.Error, fields: [:error], class: :unknown
 
   def message(%{error: error}) do

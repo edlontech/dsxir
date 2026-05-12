@@ -9,7 +9,9 @@ defmodule Dsxir.Settings do
     * `resolve/2` looks up a key: stack top-down, then globals, then the provided default.
 
   `tenant_*` keys and `:lm` tuples whose config carries a non-nil `:api_key` are rejected
-  by `configure/1` with a `Logger.warning`. Per-request tenant data flows through `context/2`.
+  by `configure/1` with a `Logger.warning`. `tenant_*` keys nested inside `:metadata` are
+  stripped from the map with a `Logger.warning`; non-tenant keys in the same map pass through
+  unchanged. Per-request tenant data flows through `context/2`.
   The `:lm` field has shape `nil | {impl_module :: module(), config :: keyword()}` (see
   `Dsxir.LM`); credentials live in the config keyword list, not at the top level.
   """
@@ -52,13 +54,20 @@ defmodule Dsxir.Settings do
   Install globals into `:persistent_term`. Merges with whatever is currently stored;
   unknown keys raise `Dsxir.Errors.Invalid.Configuration`. `tenant_*` keys and `:lm`
   tuples whose config carries a non-nil `:api_key` are dropped with a warning.
+  `tenant_*` keys nested inside `:metadata` are stripped from the map (other keys preserved).
   """
   @spec configure(Enumerable.t()) :: :ok
   def configure(opts) do
     sanitised =
       opts
       |> Enum.into(%{})
-      |> Enum.reject(&rejected?/1)
+      |> Enum.flat_map(fn pair ->
+        case rejected?(pair) do
+          true -> []
+          false -> [pair]
+          {:rewrite, new_pair} -> [new_pair]
+        end
+      end)
       |> Map.new()
 
     Enum.each(sanitised, fn {k, _} ->
@@ -148,6 +157,25 @@ defmodule Dsxir.Settings do
 
   defp stack do
     Process.get(@stack_key, [])
+  end
+
+  defp rejected?({:metadata, %{} = m}) do
+    tenant_keys =
+      m
+      |> Map.keys()
+      |> Enum.filter(fn k -> is_atom(k) and String.starts_with?(Atom.to_string(k), "tenant_") end)
+
+    case tenant_keys do
+      [] ->
+        false
+
+      _ ->
+        Logger.warning(
+          "Dsxir.Settings.configure/1 rejected tenant_* keys inside :metadata: #{inspect(tenant_keys)}"
+        )
+
+        {:rewrite, {:metadata, Map.drop(m, tenant_keys)}}
+    end
   end
 
   defp rejected?({:lm, {_impl, config}}) when is_list(config) do

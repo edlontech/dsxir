@@ -4,7 +4,7 @@ defmodule Dsxir.Errors.Adapter do
 end
 
 defmodule Dsxir.Errors.Adapter.ParseError do
-  @moduledoc false
+  @moduledoc "Raised when an adapter fails to parse an LM response into the declared output shape."
   use Splode.Error, fields: [:adapter, :field, :reason, :raw_response], class: :adapter
   @type t :: %__MODULE__{}
 
@@ -18,7 +18,7 @@ defmodule Dsxir.Errors.Adapter.ParseError do
 end
 
 defmodule Dsxir.Errors.Adapter.ZoiValidation do
-  @moduledoc false
+  @moduledoc "Raised when an adapter's per-field Zoi validation rejects a parsed value."
   use Splode.Error, fields: [:adapter, :field, :zoi_errors], class: :adapter
   @type t :: %__MODULE__{}
 
@@ -28,7 +28,7 @@ defmodule Dsxir.Errors.Adapter.ZoiValidation do
 end
 
 defmodule Dsxir.Errors.Adapter.FallbackExhausted do
-  @moduledoc false
+  @moduledoc "Raised when an adapter's one-shot fallback (Chat->Json or Json schema retry) also fails."
   use Splode.Error, fields: [:from, :to, :last_error], class: :adapter
   @type t :: %__MODULE__{}
 

@@ -55,6 +55,7 @@ defmodule Dsxir.Predictor.ParallelTest do
     end
   end
 
+  @tag :capture_log
   test "returns errors as {:error, exception} without raising" do
     stub(Dsxir.LM.Sycophant, :generate_text, fn _config, _msgs, _opts ->
       {:error, %Dsxir.Errors.LM.Authentication{model_id: "stub", reason: :nope}}
@@ -105,6 +106,7 @@ defmodule Dsxir.Predictor.ParallelTest do
     end)
   end
 
+  @tag :capture_log
   test "mismatched-name predictor surfaces as Invalid.Module in the result list" do
     Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
       prog = Program.new(ThreePredictors)

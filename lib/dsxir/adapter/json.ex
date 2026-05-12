@@ -12,10 +12,23 @@ defmodule Dsxir.Adapter.Json do
 
   Returns `{:ok, map}` on success or `{:error, %Dsxir.Errors.Adapter.* {}}` on
   schema validation failure. No fallback to other adapters happens here.
+
+  ## One-shot schema-mismatch retry
+
+  When the provider returns an object that fails Zoi validation, the adapter
+  retries once with a corrective user message appended that quotes the
+  validation error. A second failure surfaces a
+  `Dsxir.Errors.Adapter.FallbackExhausted{from: __MODULE__, to: __MODULE__,
+  last_error: err}` via `format_and_call/4`'s `{:fallback, err}` return — the
+  predictor's rescue path then raises it. Subscribers tell schema-retry
+  exhaustion apart from Chat→Json exhaustion by reading `from`/`to`. The retry
+  is internal to this module.
   """
 
   @behaviour Dsxir.Adapter
 
+  alias Dsxir.Errors.Adapter.FallbackExhausted
+  alias Dsxir.Errors.Adapter.ZoiValidation
   alias Dsxir.Settings
   alias Dsxir.Signature.Runtime
   alias Dsxir.Telemetry
@@ -97,6 +110,36 @@ defmodule Dsxir.Adapter.Json do
     result
   end
 
+  @impl Dsxir.Adapter
+  def format_and_call(signature, inputs, demos, opts) do
+    messages = format(signature, inputs, demos, opts)
+    schema = output_schema(signature)
+
+    case do_call_and_parse(signature, messages, schema, opts) do
+      {:ok, fields, usage, payload} ->
+        {:ok, fields, usage, payload}
+
+      {:retry, validation_err} ->
+        emit_fallback(signature, validation_err)
+        corrective = corrective_message(signature, validation_err)
+
+        case do_call_and_parse(signature, messages ++ [corrective], schema, opts) do
+          {:ok, fields, usage, payload} ->
+            {:ok, fields, usage, payload}
+
+          {:retry, second_err} ->
+            {:fallback,
+             %FallbackExhausted{from: __MODULE__, to: __MODULE__, last_error: second_err}}
+
+          {:lm_error, lm_err} ->
+            {:fallback, lm_err}
+        end
+
+      {:lm_error, lm_err} ->
+        {:fallback, lm_err}
+    end
+  end
+
   @doc """
   Build a `Zoi.object/1` schema from the signature's declared outputs.
 
@@ -106,6 +149,44 @@ defmodule Dsxir.Adapter.Json do
   def output_schema(signature) do
     fields = Runtime.outputs(signature)
     Zoi.object(Map.new(fields, &{&1.name, &1.zoi}))
+  end
+
+  defp do_call_and_parse(signature, messages, schema, opts) do
+    case Dsxir.LM.generate_object(messages, schema, opts) do
+      {:ok, payload, usage} ->
+        case parse(signature, payload, opts) do
+          {:ok, fields} -> {:ok, fields, usage, payload}
+          {:error, %ZoiValidation{} = err} -> {:retry, err}
+        end
+
+      {:error, lm_err} ->
+        {:lm_error, lm_err}
+    end
+  end
+
+  defp emit_fallback(signature, err) do
+    Telemetry.emit(
+      Telemetry.adapter_fallback(),
+      %{system_time: System.system_time()},
+      Map.merge(Settings.resolve(:metadata, %{}), %{
+        from: __MODULE__,
+        to: __MODULE__,
+        signature: signature,
+        reason: err
+      })
+    )
+  end
+
+  defp corrective_message(signature, %ZoiValidation{zoi_errors: zoi_errors}) do
+    names =
+      signature
+      |> Runtime.outputs()
+      |> Enum.map_join(", ", &Atom.to_string(&1.name))
+
+    Message.user(
+      "Previous response failed schema validation: #{inspect(zoi_errors)}. " <>
+        "Return a JSON object whose keys are exactly #{names}, and whose values conform to the declared types."
+    )
   end
 
   defp system_prompt(signature) do

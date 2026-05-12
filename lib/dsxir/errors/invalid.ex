@@ -4,7 +4,7 @@ defmodule Dsxir.Errors.Invalid do
 end
 
 defmodule Dsxir.Errors.Invalid.Configuration do
-  @moduledoc false
+  @moduledoc "Raised when `Dsxir.configure/1` or runtime settings receive an unknown or malformed key."
   use Splode.Error, fields: [:key, :value, :reason], class: :invalid
 
   def message(%{key: key, value: value, reason: reason}) do
@@ -13,7 +13,7 @@ defmodule Dsxir.Errors.Invalid.Configuration do
 end
 
 defmodule Dsxir.Errors.Invalid.Signature do
-  @moduledoc false
+  @moduledoc "Raised when a signature declaration is malformed at compile time."
   use Splode.Error, fields: [:module, :field, :reason], class: :invalid
 
   def message(%{module: module, field: field, reason: reason}) do
@@ -22,7 +22,7 @@ defmodule Dsxir.Errors.Invalid.Signature do
 end
 
 defmodule Dsxir.Errors.Invalid.Module do
-  @moduledoc false
+  @moduledoc "Raised when a `Dsxir.Module` predicate dispatches to an undeclared predictor name."
   use Splode.Error, fields: [:module, :predictor, :reason], class: :invalid
 
   def message(%{module: module, predictor: predictor, reason: reason}) do
@@ -31,7 +31,7 @@ defmodule Dsxir.Errors.Invalid.Module do
 end
 
 defmodule Dsxir.Errors.Invalid.SignatureMismatch do
-  @moduledoc false
+  @moduledoc "Raised when a saved artifact hydrates into a module whose signature shape does not match."
   use Splode.Error, fields: [:module, :expected, :loaded, :diff], class: :invalid
 
   def message(%{module: module, diff: diff}) do
@@ -40,7 +40,7 @@ defmodule Dsxir.Errors.Invalid.SignatureMismatch do
 end
 
 defmodule Dsxir.Errors.Invalid.Trainset do
-  @moduledoc false
+  @moduledoc "Raised when an optimizer is invoked with an empty or malformed trainset."
   use Splode.Error, fields: [:reason, :example], class: :invalid
 
   def message(%{reason: reason}) do
@@ -49,7 +49,7 @@ defmodule Dsxir.Errors.Invalid.Trainset do
 end
 
 defmodule Dsxir.Errors.Invalid.Metric do
-  @moduledoc false
+  @moduledoc "Raised when a metric returns a non-numeric/non-boolean value for an example."
   use Splode.Error, fields: [:example, :returned, :expected], class: :invalid
 
   def message(%{example: example, returned: returned, expected: expected}) do
@@ -58,7 +58,7 @@ defmodule Dsxir.Errors.Invalid.Metric do
 end
 
 defmodule Dsxir.Errors.Invalid.Tool do
-  @moduledoc false
+  @moduledoc "Raised when a `Dsxir.Primitives.Tool` declaration or call is malformed."
   use Splode.Error, fields: [:tool, :reason, :inner], class: :invalid
 
   @type t :: %__MODULE__{}

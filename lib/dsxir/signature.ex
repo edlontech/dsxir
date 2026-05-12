@@ -18,7 +18,7 @@ defmodule Dsxir.Signature do
       predictor :answer, Dsxir.Predictor.Predict, signature: "question -> answer"
 
   The grammar mirrors DSPy's: `inputs -> outputs` with optional `name: type`
-  annotations. See `Dsxir.Signature.Parser` for the supported types.
+  annotations.
   """
 
   use Spark.Dsl, default_extensions: [extensions: [Dsxir.Signature.Dsl]]

@@ -11,7 +11,8 @@ defmodule Dsxir.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),
       dialyzer: dialyzer(),
-      aliases: aliases()
+      aliases: aliases(),
+      docs: docs()
     ]
   end
 
@@ -37,6 +38,69 @@ defmodule Dsxir.MixProject do
   defp aliases do
     [
       "test.integration": ["test --only integration"]
+    ]
+  end
+
+  defp docs do
+    [
+      main: "Dsxir",
+      extras: [
+        "README.md"
+      ],
+      groups_for_modules: [
+        Core: [Dsxir, Dsxir.Program, Dsxir.Settings, Dsxir.CallContext],
+        Signature: [
+          Dsxir.Signature,
+          Dsxir.Signature.Runtime,
+          Dsxir.Signature.Compiled,
+          Dsxir.Signature.Field
+        ],
+        Module: [
+          Dsxir.Module,
+          Dsxir.Module.Runtime,
+          Dsxir.Module.PredictorDecl
+        ],
+        Adapter: [
+          Dsxir.Adapter,
+          Dsxir.Adapter.Chat,
+          Dsxir.Adapter.Json
+        ],
+        Predictor: [
+          Dsxir.Predictor,
+          Dsxir.Predictor.Predict,
+          Dsxir.Predictor.ChainOfThought,
+          Dsxir.Predictor.ReAct,
+          Dsxir.Predictor.Parallel
+        ],
+        Optimizer: [
+          Dsxir.Optimizer,
+          Dsxir.Optimizer.LabeledFewShot,
+          Dsxir.Optimizer.BootstrapFewShot
+        ],
+        Evaluate: [Dsxir.Evaluate, Dsxir.EvaluationResult, Dsxir.Metric],
+        Trace: [Dsxir.Trace],
+        Retrieval: [Dsxir.Retrieval, Dsxir.Retrieval.Embedder, Dsxir.Retrieval.InMemory],
+        Primitives: [
+          Dsxir.Example,
+          Dsxir.Prediction,
+          Dsxir.Demo,
+          Dsxir.Primitives.Tool,
+          Dsxir.Primitives.History
+        ],
+        LM: [Dsxir.LM, Dsxir.LM.Sycophant],
+        Telemetry: [Dsxir.Telemetry, Dsxir.History],
+        Errors: [
+          Dsxir.Errors,
+          Dsxir.Errors.Halted,
+          Dsxir.Errors.Halted.Plug,
+          Dsxir.Errors.Invalid,
+          Dsxir.Errors.Adapter,
+          Dsxir.Errors.LM,
+          Dsxir.Errors.Framework,
+          Dsxir.Errors.Unknown
+        ],
+        Artifact: [Dsxir.Artifact]
+      ]
     ]
   end
 

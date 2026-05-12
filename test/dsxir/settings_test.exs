@@ -93,6 +93,21 @@ defmodule Dsxir.SettingsTest do
     end)
   end
 
+  test "configure/1 strips tenant_* keys nested inside :metadata with a warning" do
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        Dsxir.Settings.configure(metadata: %{tenant_id: "t1", request_id: "r1"})
+      end)
+
+    assert log =~ "rejected tenant_* keys inside :metadata"
+    assert Dsxir.Settings.resolve(:metadata) == %{request_id: "r1"}
+  end
+
+  test "configure/1 leaves :metadata untouched when it carries no tenant_* keys" do
+    assert :ok = Dsxir.Settings.configure(metadata: %{request_id: "r1"})
+    assert Dsxir.Settings.resolve(:metadata) == %{request_id: "r1"}
+  end
+
   describe "run/2 :persistent_term write avoidance" do
     test "skips :persistent_term.put when snapshot globals match the live globals" do
       Dsxir.Settings.configure(cache: false)

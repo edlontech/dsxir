@@ -31,10 +31,11 @@ defmodule Dsxir.Telemetry do
   `[:dsxir, :predictor, :exception]` is always present, with value `nil` when no
   error occurred. Subscribers should branch on `nil`, never on `Map.has_key?/2`.
 
-  Token measurements (`tokens_in`, `tokens_out`, `cost`) will follow the same
-  always-present-nil convention when relayed from the upstream LM impl. Until
-  that wiring lands, those keys are absent from emitted measurements — once
-  they appear they will follow the convention.
+  Token measurements (`tokens_in`, `tokens_out`, `cost`) follow the same
+  always-present-nil convention on `[:dsxir, :predictor, :stop]`. They are
+  populated by `Dsxir.LM` implementations via the `Dsxir.LM.usage()` shape;
+  when the upstream provider did not report usage, the impl returns
+  `Dsxir.LM.empty_usage/0` (all three keys `nil`).
 
   ## Optimizer events
 

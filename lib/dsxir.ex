@@ -3,29 +3,6 @@ defmodule Dsxir do
   Top-level facade for the dsxir framework. Re-exports the user-facing entry
   points; predictors, adapters, optimizers, and LM impls are reached for under
   their own module names.
-
-  Public surface relevant to a user program:
-
-      use Dsxir.Signature
-      use Dsxir.Module
-
-      Dsxir.configure/1
-      Dsxir.context/2
-      Dsxir.with_trace/1
-
-      Dsxir.evaluate/2
-      Dsxir.evaluate!/2
-      Dsxir.compile/5
-      Dsxir.save/2
-      Dsxir.save!/2
-      Dsxir.load/2
-      Dsxir.load/3
-      Dsxir.load!/2
-      Dsxir.load!/3
-
-      Dsxir.Predictor.Predict
-      Dsxir.Adapter.Chat
-      Dsxir.LM.Sycophant
   """
 
   defdelegate configure(opts), to: Dsxir.Settings

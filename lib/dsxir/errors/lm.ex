@@ -4,7 +4,7 @@ defmodule Dsxir.Errors.LM do
 end
 
 defmodule Dsxir.Errors.LM.RequestFailed do
-  @moduledoc false
+  @moduledoc "Raised on a non-classified LM provider error (transport, server error, empty response)."
   use Splode.Error, fields: [:model_id, :status, :parent_error], class: :lm
 
   def message(%{model_id: model_id, status: status, parent_error: parent_error}) do
@@ -13,7 +13,7 @@ defmodule Dsxir.Errors.LM.RequestFailed do
 end
 
 defmodule Dsxir.Errors.LM.ContextWindow do
-  @moduledoc false
+  @moduledoc "Raised when the LM rejects a request because the prompt exceeded its context window."
   use Splode.Error,
     fields: [:model_id, :prompt_tokens, :limit, :parent_error],
     class: :lm
@@ -34,7 +34,7 @@ defmodule Dsxir.Errors.LM.ContextWindow do
 end
 
 defmodule Dsxir.Errors.LM.RateLimited do
-  @moduledoc false
+  @moduledoc "Raised when the LM rejects a request due to rate limits, with optional retry_after."
   use Splode.Error, fields: [:model_id, :retry_after], class: :lm
 
   def message(%{model_id: model_id, retry_after: retry_after}) do
@@ -43,7 +43,7 @@ defmodule Dsxir.Errors.LM.RateLimited do
 end
 
 defmodule Dsxir.Errors.LM.Authentication do
-  @moduledoc false
+  @moduledoc "Raised when the LM rejects a request due to missing or invalid credentials."
   use Splode.Error, fields: [:model_id, :reason], class: :lm
 
   def message(%{model_id: model_id, reason: reason}) do
