@@ -150,6 +150,14 @@ are always present on `[:dsxir, :predictor, :stop]`; their value is
 `nil` when the upstream LM did not report usage. See `Dsxir.Telemetry`
 for the full event list.
 
+## Tutorials
+
+- [Email Information Extraction](guides/tutorials/email_extraction.livemd)
+  — classify, extract, summarize, and propose action items over an
+  inbox, then compile a few-shot version with
+  `Dsxir.Optimizer.BootstrapFewShot`. Livebook: `livebook server
+  guides/tutorials/email_extraction.livemd` from a checkout.
+
 ## Comparing to DSPy
 
 dsxir mirrors DSPy's surface where reasonable; some shapes differ:

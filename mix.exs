@@ -45,7 +45,11 @@ defmodule Dsxir.MixProject do
     [
       main: "Dsxir",
       extras: [
-        "README.md"
+        "README.md",
+        "guides/tutorials/email_extraction.livemd"
+      ],
+      groups_for_extras: [
+        Tutorials: ~r"guides/tutorials/.?"
       ],
       groups_for_modules: [
         Core: [Dsxir, Dsxir.Program, Dsxir.Settings, Dsxir.CallContext],
