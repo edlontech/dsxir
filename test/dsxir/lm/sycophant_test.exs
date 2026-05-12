@@ -352,4 +352,167 @@ defmodule Dsxir.LM.SycophantTest do
       )
     end
   end
+
+  describe "embed/3" do
+    test "returns float vectors in input order" do
+      expect(Sycophant, :embed, fn %Sycophant.EmbeddingRequest{
+                                     inputs: ["a", "b"],
+                                     model: "openai:text-embedding-3-small"
+                                   },
+                                   _opts ->
+        {:ok,
+         %Sycophant.EmbeddingResponse{
+           embeddings: %{float: [[0.1, 0.2], [0.3, 0.4]]},
+           model: "openai:text-embedding-3-small",
+           usage: %Sycophant.Usage{input_tokens: 2, output_tokens: 0, total_cost: +0.0}
+         }}
+      end)
+
+      assert {:ok, [[0.1, 0.2], [0.3, 0.4]], %{tokens_in: 2, tokens_out: 0, cost: +0.0}} =
+               Impl.embed(
+                 [
+                   model: "openai:gpt-4o-mini",
+                   embedding_model: "openai:text-embedding-3-small"
+                 ],
+                 ["a", "b"],
+                 []
+               )
+    end
+
+    test "per-call :embedding_model overrides config :embedding_model" do
+      expect(Sycophant, :embed, fn %Sycophant.EmbeddingRequest{model: "override:model"}, _opts ->
+        {:ok,
+         %Sycophant.EmbeddingResponse{
+           embeddings: %{float: [[+0.0]]},
+           usage: nil
+         }}
+      end)
+
+      assert {:ok, [[+0.0]], %{tokens_in: nil, tokens_out: nil, cost: nil}} =
+               Impl.embed(
+                 [model: "m", embedding_model: "config:model"],
+                 ["a"],
+                 embedding_model: "override:model"
+               )
+    end
+
+    test "falls back to config :model when no :embedding_model is set" do
+      expect(Sycophant, :embed, fn %Sycophant.EmbeddingRequest{model: "openai:gpt-4o-mini"},
+                                   _opts ->
+        {:ok,
+         %Sycophant.EmbeddingResponse{
+           embeddings: %{float: [[0.5]]},
+           usage: nil
+         }}
+      end)
+
+      assert {:ok, [[0.5]], _usage} =
+               Impl.embed([model: "openai:gpt-4o-mini"], ["a"], [])
+    end
+
+    test "drops :embedding_model from sycophant opts" do
+      expect(Sycophant, :embed, fn _req, opts ->
+        refute Keyword.has_key?(opts, :embedding_model)
+
+        {:ok,
+         %Sycophant.EmbeddingResponse{
+           embeddings: %{float: [[0.0]]},
+           usage: nil
+         }}
+      end)
+
+      Impl.embed(
+        [model: "m", embedding_model: "e"],
+        ["a"],
+        []
+      )
+    end
+
+    test "lifts api_key/base_url into credentials and drops :headers" do
+      expect(Sycophant, :embed, fn _req, opts ->
+        assert opts[:credentials] == %{api_key: "sk-test", base_url: "https://example.test"}
+        refute Keyword.has_key?(opts, :api_key)
+        refute Keyword.has_key?(opts, :base_url)
+        refute Keyword.has_key?(opts, :headers)
+
+        {:ok,
+         %Sycophant.EmbeddingResponse{
+           embeddings: %{float: [[0.0]]},
+           usage: nil
+         }}
+      end)
+
+      Impl.embed(
+        [
+          model: "m",
+          api_key: "sk-test",
+          base_url: "https://example.test",
+          headers: [{"x-foo", "bar"}]
+        ],
+        ["a"],
+        []
+      )
+    end
+
+    test "returns :no_float_embeddings when the response has no float vectors" do
+      expect(Sycophant, :embed, fn _req, _opts ->
+        {:ok, %Sycophant.EmbeddingResponse{embeddings: %{int8: [[1, 2]]}}}
+      end)
+
+      assert {:error,
+              %Dsxir.Errors.Invalid.Configuration{
+                key: :embedding_type,
+                value: [:int8],
+                reason: :no_float_embeddings
+              }} =
+               Impl.embed(
+                 [model: "m", embedding_model: "e"],
+                 ["a"],
+                 []
+               )
+    end
+
+    test "translates upstream errors via the same translate path" do
+      err = %Sycophant.Error.Provider.AuthenticationFailed{status: 401, body: "nope"}
+
+      expect(Sycophant, :embed, fn _req, _opts -> {:error, err} end)
+
+      assert {:error, %Dsxir.Errors.LM.Authentication{model_id: "e", reason: ^err}} =
+               Impl.embed([model: "m", embedding_model: "e"], ["a"], [])
+    end
+  end
+
+  describe "Dsxir.LM.embed/2 dispatcher" do
+    defmodule NoEmbedImpl do
+      @behaviour Dsxir.LM
+      @impl true
+      def generate_text(_c, _m, _o), do: {:ok, "", Dsxir.LM.empty_usage()}
+      @impl true
+      def generate_object(_c, _m, _s, _o), do: {:ok, %{}, Dsxir.LM.empty_usage()}
+    end
+
+    test "raises Configuration{reason: :embed_unsupported} when impl does not export embed/3" do
+      Dsxir.Settings.context([lm: {NoEmbedImpl, [model: "fake:m"]}], fn ->
+        assert_raise Dsxir.Errors.Invalid.Configuration, ~r/embed_unsupported/, fn ->
+          Dsxir.LM.embed(["a"])
+        end
+      end)
+    end
+
+    test "raises Configuration{reason: :no_lm_configured} when :lm is unset" do
+      Dsxir.Settings.context([lm: nil], fn ->
+        assert_raise Dsxir.Errors.Invalid.Configuration, ~r/no_lm_configured/, fn ->
+          Dsxir.LM.embed(["a"])
+        end
+      end)
+    end
+
+    test "raises Configuration{reason: :expected_impl_config_tuple} for malformed config" do
+      Dsxir.Settings.context([lm: :bogus], fn ->
+        assert_raise Dsxir.Errors.Invalid.Configuration, ~r/expected_impl_config_tuple/, fn ->
+          Dsxir.LM.embed(["a"])
+        end
+      end)
+    end
+  end
 end

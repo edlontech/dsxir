@@ -76,6 +76,8 @@ defmodule Dsxir.Signature.Transformer do
       else: {:error, {:not_a_zoi_schema, zoi_struct}}
   end
 
+  defp expand_type(Dsxir.Primitives.History), do: {:ok, Zoi.any()}
+
   defp expand_type(other), do: {:error, {:unknown_type, other}}
 
   defp zoi_schema?(struct), do: Zoi.Type.impl_for(struct) != nil

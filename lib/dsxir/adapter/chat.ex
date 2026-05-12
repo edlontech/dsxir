@@ -23,11 +23,12 @@ defmodule Dsxir.Adapter.Chat do
   @impl Dsxir.Adapter
   def format(signature, inputs, demos, _opts) do
     start = System.monotonic_time()
+    {history_messages, scalar_inputs, history_names} = split_history_inputs(signature, inputs)
 
-    messages = [
-      Message.system(system_prompt(signature)),
-      Message.user(user_prompt(signature, inputs, demos))
-    ]
+    messages =
+      [Message.system(system_prompt(signature))]
+      |> Enum.concat(history_messages)
+      |> Enum.concat([Message.user(user_prompt(signature, scalar_inputs, history_names, demos))])
 
     Telemetry.emit(
       Telemetry.adapter_format(),
@@ -40,6 +41,21 @@ defmodule Dsxir.Adapter.Chat do
     )
 
     messages
+  end
+
+  defp split_history_inputs(signature, inputs) do
+    signature
+    |> Runtime.inputs()
+    |> Enum.reduce({[], inputs, MapSet.new()}, fn f, {msgs, remaining, names} ->
+      case Map.get(remaining, f.name) do
+        %Dsxir.Primitives.History{} = h ->
+          {msgs ++ Dsxir.Primitives.History.to_messages(h), Map.delete(remaining, f.name),
+           MapSet.put(names, f.name)}
+
+        _ ->
+          {msgs, remaining, names}
+      end
+    end)
   end
 
   @impl Dsxir.Adapter
@@ -94,11 +110,12 @@ defmodule Dsxir.Adapter.Chat do
     """
   end
 
-  defp user_prompt(signature, inputs, demos) do
+  defp user_prompt(signature, inputs, history_names, demos) do
     demo_section = Enum.map_join(demos, "\n\n", &render_demo(signature, &1))
 
     input_section =
       Runtime.inputs(signature)
+      |> Enum.reject(&MapSet.member?(history_names, &1.name))
       |> Enum.map_join("\n", fn f ->
         "[[ ## #{f.name} ## ]]\n#{render_value(Map.fetch!(inputs, f.name))}"
       end)

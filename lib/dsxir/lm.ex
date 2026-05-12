@@ -32,7 +32,10 @@ defmodule Dsxir.LM do
   @callback generate_object(config(), messages(), Zoi.schema(), opts()) ::
               {:ok, map(), usage()} | {:error, term()}
 
-  @optional_callbacks [generate_object: 4]
+  @callback embed(config(), [String.t()], opts()) ::
+              {:ok, [[float()]], usage()} | {:error, term()}
+
+  @optional_callbacks [generate_object: 4, embed: 3]
 
   @doc """
   Empty usage map used by impls when the upstream LM did not report token
@@ -91,6 +94,42 @@ defmodule Dsxir.LM do
             key: :lm,
             value: impl,
             reason: :generate_object_unsupported
+          }
+        end
+
+      nil ->
+        raise %Dsxir.Errors.Invalid.Configuration{
+          key: :lm,
+          value: nil,
+          reason: :no_lm_configured
+        }
+
+      other ->
+        raise %Dsxir.Errors.Invalid.Configuration{
+          key: :lm,
+          value: other,
+          reason: :expected_impl_config_tuple
+        }
+    end
+  end
+
+  @doc """
+  Dispatch an `embed` call to the impl module currently active in
+  `Dsxir.Settings`. Per-call `opts` are merged on top of the config. Raises
+  `Dsxir.Errors.Invalid.Configuration` when `:lm` is unset, malformed, or the
+  configured impl does not implement the optional `embed/3` callback.
+  """
+  @spec embed([String.t()], opts()) :: {:ok, [[float()]], usage()} | {:error, term()}
+  def embed(inputs, opts \\ []) when is_list(inputs) and is_list(opts) do
+    case Dsxir.Settings.resolve(:lm) do
+      {impl, config} when is_atom(impl) and is_list(config) ->
+        if Code.ensure_loaded?(impl) and function_exported?(impl, :embed, 3) do
+          impl.embed(config, inputs, opts)
+        else
+          raise %Dsxir.Errors.Invalid.Configuration{
+            key: :lm,
+            value: impl,
+            reason: :embed_unsupported
           }
         end
 

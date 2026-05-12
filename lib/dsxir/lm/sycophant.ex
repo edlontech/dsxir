@@ -112,6 +112,31 @@ defmodule Dsxir.LM.Sycophant do
     end
   end
 
+  @impl Dsxir.LM
+  def embed(config, inputs, opts) do
+    model =
+      Keyword.get(opts, :embedding_model, Keyword.get(config, :embedding_model)) ||
+        Keyword.fetch!(config, :model)
+
+    request = %Sycophant.EmbeddingRequest{inputs: inputs, model: model}
+
+    case Sycophant.embed(request, build_sycophant_embed_opts(config, opts)) do
+      {:ok, %Sycophant.EmbeddingResponse{embeddings: %{float: vectors}, usage: usage}} ->
+        {:ok, vectors, extract_usage(usage)}
+
+      {:ok, %Sycophant.EmbeddingResponse{embeddings: embeddings}} ->
+        {:error,
+         %Dsxir.Errors.Invalid.Configuration{
+           key: :embedding_type,
+           value: Map.keys(embeddings),
+           reason: :no_float_embeddings
+         }}
+
+      {:error, err} ->
+        {:error, translate(err, model)}
+    end
+  end
+
   @dsxir_internal_opts [:path, :adapter, :cache, :_dsxir_nonce]
   @credential_opts [:api_key, :base_url, :headers]
 
@@ -120,6 +145,14 @@ defmodule Dsxir.LM.Sycophant do
 
     merged
     |> Keyword.drop(@credential_opts ++ @dsxir_internal_opts)
+    |> maybe_put_credentials(merged)
+  end
+
+  defp build_sycophant_embed_opts(config, opts) do
+    merged = Keyword.merge(Keyword.drop(config, [:model, :embedding_model]), opts)
+
+    merged
+    |> Keyword.drop(@credential_opts ++ @dsxir_internal_opts ++ [:embedding_model])
     |> maybe_put_credentials(merged)
   end
 

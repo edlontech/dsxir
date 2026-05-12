@@ -56,3 +56,14 @@ defmodule Dsxir.Errors.Invalid.Metric do
     "invalid metric output for example=#{inspect(example)}: returned=#{inspect(returned)} expected=#{inspect(expected)}"
   end
 end
+
+defmodule Dsxir.Errors.Invalid.Tool do
+  @moduledoc false
+  use Splode.Error, fields: [:tool, :reason, :inner], class: :invalid
+
+  @type t :: %__MODULE__{}
+
+  def message(%{tool: tool, reason: reason, inner: inner}) do
+    "invalid tool: tool=#{inspect(tool)} reason=#{inspect(reason)} inner=#{inspect(inner)}"
+  end
+end

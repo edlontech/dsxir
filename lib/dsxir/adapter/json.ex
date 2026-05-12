@@ -26,6 +26,14 @@ defmodule Dsxir.Adapter.Json do
 
   @impl Dsxir.Adapter
   def format(signature, inputs, demos, opts) do
+    if Enum.any?(Map.values(inputs), &match?(%Dsxir.Primitives.History{}, &1)) do
+      raise %Dsxir.Errors.Invalid.Configuration{
+        key: :adapter,
+        value: __MODULE__,
+        reason: :history_input_unsupported
+      }
+    end
+
     if Keyword.has_key?(opts, :stream) do
       raise %Dsxir.Errors.Invalid.Configuration{
         key: :stream,
