@@ -59,6 +59,22 @@ defmodule Dsxir.Predictor.ReAct do
             done?: boolean(),
             final: nil | map()
           }
+
+    defimpl Inspect do
+      import Inspect.Algebra
+
+      def inspect(%Dsxir.Predictor.ReAct.State{} = state, _opts) do
+        concat([
+          "#Dsxir.Predictor.ReAct.State<iter: ",
+          Integer.to_string(state.iter),
+          ", done?: ",
+          Atom.to_string(state.done?),
+          ", trajectory: ",
+          Integer.to_string(length(state.trajectory)),
+          " step(s)>"
+        ])
+      end
+    end
   end
 
   @impl Dsxir.Predictor

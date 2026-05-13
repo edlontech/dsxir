@@ -247,4 +247,20 @@ defmodule Dsxir.Evaluate do
 
   defp prediction_payload(nil), do: nil
   defp prediction_payload(%Dsxir.Prediction{fields: f}), do: f
+
+  defimpl Inspect do
+    import Inspect.Algebra
+
+    def inspect(%Dsxir.Evaluate{} = ev, _opts) do
+      concat([
+        "#Dsxir.Evaluate<devset: ",
+        Integer.to_string(length(ev.devset)),
+        ", num_threads: ",
+        Integer.to_string(ev.num_threads),
+        ", max_errors: ",
+        Integer.to_string(ev.max_errors),
+        ">"
+      ])
+    end
+  end
 end

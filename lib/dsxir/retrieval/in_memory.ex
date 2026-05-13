@@ -104,4 +104,18 @@ defmodule Dsxir.Retrieval.InMemory do
       trajectory: %{lengths: {length(a), length(b)}}
     }
   end
+
+  defimpl Inspect do
+    import Inspect.Algebra
+
+    def inspect(%Dsxir.Retrieval.InMemory{} = idx, opts) do
+      concat([
+        "#Dsxir.Retrieval.InMemory<",
+        Integer.to_string(length(idx.docs)),
+        " doc(s), embedder: ",
+        to_doc(idx.embedder, opts),
+        ">"
+      ])
+    end
+  end
 end

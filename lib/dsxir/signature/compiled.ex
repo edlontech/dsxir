@@ -18,4 +18,16 @@ defmodule Dsxir.Signature.Compiled do
           instruction: nil | String.t(),
           source: term()
         }
+
+  defimpl Inspect do
+    import Inspect.Algebra
+
+    def inspect(%Dsxir.Signature.Compiled{fields: fields}, _opts) do
+      {inputs, outputs} = Enum.split_with(fields, &(&1.kind == :input))
+      concat(["#Dsxir.Signature.Compiled<", names(inputs), " -> ", names(outputs), ">"])
+    end
+
+    defp names([]), do: "_"
+    defp names(fields), do: fields |> Enum.map_join(", ", &Atom.to_string(&1.name))
+  end
 end

@@ -33,6 +33,7 @@ defmodule Dsxir.History do
   @handler_id "dsxir-history-handler"
   @structured_keys [:predictor, :signature, :adapter, :prediction, :error_class]
 
+  @derive {Inspect, except: [:counter_ref]}
   defstruct [:counter_ref, :max_size, :trim_batch]
 
   @type t :: %__MODULE__{

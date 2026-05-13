@@ -7,6 +7,7 @@ defmodule Dsxir.Signature.Field do
   `:input` or `:output`.
   """
 
+  @derive {Inspect, except: [:__spark_metadata__]}
   defstruct [:name, :type, :zoi, :kind, :desc, :__spark_metadata__]
 
   @type kind :: :input | :output

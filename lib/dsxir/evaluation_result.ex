@@ -53,4 +53,20 @@ defmodule Dsxir.EvaluationResult do
     avg = sum / length(values)
     Float.round(avg * 100.0, 1)
   end
+
+  defimpl Inspect do
+    import Inspect.Algebra
+
+    def inspect(%Dsxir.EvaluationResult{} = result, opts) do
+      concat([
+        "#Dsxir.EvaluationResult<score: ",
+        Float.to_string(result.score),
+        ", total: ",
+        Integer.to_string(length(result.results)),
+        ", errors: ",
+        to_doc(result.errors, opts),
+        ">"
+      ])
+    end
+  end
 end

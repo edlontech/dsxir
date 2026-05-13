@@ -21,6 +21,7 @@ defmodule Dsxir.Primitives.Tool do
   Sycophant does not auto-execute the tool. dsxir owns the loop.
   """
 
+  @derive {Inspect, except: [:function]}
   @enforce_keys [:name, :description, :parameters, :function]
   defstruct [:name, :description, :parameters, :function]
 

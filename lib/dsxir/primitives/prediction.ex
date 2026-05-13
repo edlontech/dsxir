@@ -40,4 +40,23 @@ defmodule Dsxir.Prediction do
     {value, updated} = Map.pop(fields, key)
     {value, %{pred | fields: updated}}
   end
+
+  defimpl Inspect do
+    import Inspect.Algebra
+
+    def inspect(%Dsxir.Prediction{fields: fields}, opts) do
+      container_doc("#Dsxir.Prediction<", Enum.to_list(fields), ">", opts, &field_doc/2,
+        separator: ",",
+        break: :strict
+      )
+    end
+
+    defp field_doc({k, v}, opts) when is_atom(k) do
+      concat([Atom.to_string(k), ": ", to_doc(v, opts)])
+    end
+
+    defp field_doc({k, v}, opts) do
+      concat([to_doc(k, opts), " => ", to_doc(v, opts)])
+    end
+  end
 end

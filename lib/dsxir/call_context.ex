@@ -33,4 +33,20 @@ defmodule Dsxir.CallContext do
   def new(fields) when is_list(fields) do
     struct!(__MODULE__, fields)
   end
+
+  defimpl Inspect do
+    import Inspect.Algebra
+
+    def inspect(%Dsxir.CallContext{} = ctx, opts) do
+      concat([
+        "#Dsxir.CallContext<predictor: ",
+        to_doc(ctx.predictor, opts),
+        ", signature: ",
+        inspect(ctx.signature),
+        ", inputs: ",
+        to_doc(Map.keys(ctx.inputs), opts),
+        ">"
+      ])
+    end
+  end
 end

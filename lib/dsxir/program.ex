@@ -16,6 +16,28 @@ defmodule Dsxir.Program do
             instructions_override: nil | String.t(),
             signature_override: nil | module()
           }
+
+    defimpl Inspect do
+      import Inspect.Algebra
+
+      def inspect(%Dsxir.Program.State{} = state, _opts) do
+        parts = [
+          "demos: " <> Integer.to_string(length(state.demos))
+        ]
+
+        parts =
+          if state.instructions_override,
+            do: parts ++ ["instructions_override?: true"],
+            else: parts
+
+        parts =
+          if state.signature_override,
+            do: parts ++ ["signature_override: " <> inspect(state.signature_override)],
+            else: parts
+
+        concat(["#Dsxir.Program.State<", Enum.join(parts, ", "), ">"])
+      end
+    end
   end
 
   @enforce_keys [:module]
@@ -82,5 +104,28 @@ defmodule Dsxir.Program do
   @spec put_state(t(), atom(), State.t()) :: t()
   def put_state(%__MODULE__{} = prog, name, %State{} = state) when is_atom(name) do
     %{prog | predictors: Map.put(prog.predictors, name, state)}
+  end
+
+  defimpl Inspect do
+    import Inspect.Algebra
+
+    def inspect(%Dsxir.Program{module: module, predictors: predictors}, opts) do
+      summary =
+        predictors
+        |> Enum.map(fn {name, %{demos: demos}} -> {name, length(demos)} end)
+        |> Enum.sort_by(fn {name, _} -> name end)
+
+      concat([
+        "#Dsxir.Program<",
+        inspect(module),
+        ", predictors: ",
+        container_doc("[", summary, "]", opts, &predictor_doc/2, separator: ",", break: :strict),
+        ">"
+      ])
+    end
+
+    defp predictor_doc({name, demo_count}, _opts) do
+      concat([Atom.to_string(name), ": ", Integer.to_string(demo_count), " demo(s)"])
+    end
   end
 end

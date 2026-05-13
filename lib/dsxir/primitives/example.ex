@@ -43,4 +43,21 @@ defmodule Dsxir.Example do
   def labels(%__MODULE__{data: data, input_keys: keys}) do
     Map.drop(data, MapSet.to_list(keys))
   end
+
+  defimpl Inspect do
+    import Inspect.Algebra
+
+    def inspect(%Dsxir.Example{} = ex, opts) do
+      inputs = Dsxir.Example.inputs(ex)
+      labels = Dsxir.Example.labels(ex)
+
+      concat([
+        "#Dsxir.Example<inputs: ",
+        to_doc(inputs, opts),
+        ", labels: ",
+        to_doc(labels, opts),
+        ">"
+      ])
+    end
+  end
 end

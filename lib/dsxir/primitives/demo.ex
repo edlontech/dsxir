@@ -41,4 +41,24 @@ defmodule Dsxir.Demo do
   def bootstrapped(%Dsxir.Example{} = ex, source) when is_map(source) do
     %__MODULE__{example: ex, kind: :bootstrapped, source: source}
   end
+
+  defimpl Inspect do
+    import Inspect.Algebra
+
+    def inspect(%Dsxir.Demo{example: ex, kind: kind, source: nil}, opts) do
+      concat(["#Dsxir.Demo<", to_doc(kind, opts), ", ", to_doc(ex, opts), ">"])
+    end
+
+    def inspect(%Dsxir.Demo{example: ex, kind: kind, source: source}, opts) do
+      concat([
+        "#Dsxir.Demo<",
+        to_doc(kind, opts),
+        ", source: ",
+        to_doc(source, opts),
+        ", ",
+        to_doc(ex, opts),
+        ">"
+      ])
+    end
+  end
 end

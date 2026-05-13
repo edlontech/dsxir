@@ -202,4 +202,40 @@ defmodule Dsxir.Settings do
   end
 
   defp rejected?(_), do: false
+
+  defimpl Inspect do
+    import Inspect.Algebra
+
+    @sensitive_keys [:api_key, :token, :password, :secret]
+
+    def inspect(%Dsxir.Settings{} = settings, opts) do
+      concat([
+        "#Dsxir.Settings<",
+        to_doc(
+          %{
+            lm: mask_lm(settings.lm),
+            adapter: settings.adapter,
+            callbacks: length(settings.callbacks),
+            cache: settings.cache,
+            call_plugs: length(settings.call_plugs),
+            metadata: settings.metadata
+          },
+          opts
+        ),
+        ">"
+      ])
+    end
+
+    defp mask_lm(nil), do: nil
+
+    defp mask_lm({impl, config}) when is_list(config) do
+      masked =
+        Enum.map(config, fn
+          {k, _v} when k in @sensitive_keys -> {k, "[FILTERED]"}
+          pair -> pair
+        end)
+
+      {impl, masked}
+    end
+  end
 end

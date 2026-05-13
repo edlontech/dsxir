@@ -46,4 +46,16 @@ defmodule Dsxir.Primitives.History do
       end
     end)
   end
+
+  defimpl Inspect do
+    import Inspect.Algebra
+
+    def inspect(%Dsxir.Primitives.History{messages: msgs}, opts) do
+      container_doc("#Dsxir.Primitives.History<", msgs, ">", opts, &message_doc/2, separator: ",")
+    end
+
+    defp message_doc(%{role: role, content: content}, opts) do
+      concat([Atom.to_string(role), ": ", to_doc(content, opts)])
+    end
+  end
 end
