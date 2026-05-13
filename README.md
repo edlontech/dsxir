@@ -10,7 +10,7 @@ Add `dsxir` to your dependencies:
 
 ```elixir
 def deps do
-  [{:dsxir, "~> 0.1"}]
+  [{:dsxir, "~> 0.1"}] # x-release-please-version
 end
 ```
 

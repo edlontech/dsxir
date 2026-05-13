@@ -6,6 +6,8 @@ defmodule Dsxir.MixProject do
       app: :dsxir,
       version: "0.1.0",
       elixir: "~> 1.19",
+      description: description(),
+      package: package(),
       start_permanent: Mix.env() == :prod,
       test_coverage: [tool: ExCoveralls],
       elixirc_paths: elixirc_paths(Mix.env()),
@@ -134,6 +136,18 @@ defmodule Dsxir.MixProject do
       {:spark, "~> 2.7"},
       {:sycophant, "~> 0.4"},
       {:tidewave, "~> 0.5", only: :dev, runtime: false}
+    ]
+  end
+
+  defp description() do
+    "An extensible framework for building and optimizing LLM-powered applications in Elixir."
+  end
+
+  defp package() do
+    [
+      licenses: ["MIT"],
+      links: %{"GitHub" => "https://github.com/edlontech/dsxir"},
+      files: ~w(lib mix.exs README.md CHANGELOG.md LICENSE .formatter.exs)
     ]
   end
 end
