@@ -25,19 +25,31 @@ defmodule Dsxir.Optimizer do
   @callback compile(
               student :: Program.t(),
               trainset :: [Dsxir.Example.t()],
-              metric :: Dsxir.Metric.t(),
+              metric :: nil | Dsxir.Metric.t(),
               opts :: keyword()
             ) :: result()
 
   @doc """
   Dispatch to `impl.compile/4` with validated arguments.
 
-  Guards: `impl` must be an atom (module), `trainset` a list, `metric` a 3-arity
-  function, and `opts` a keyword list (any list satisfies the guard; impls are
-  expected to treat it as a keyword list).
+  Guards: `impl` must be an atom (module), `trainset` a list, `metric` must be
+  either `nil` or a 3-arity function (optimizers that do not need a metric —
+  e.g. `Dsxir.Optimizer.KNNFewShot` — accept `nil`), and `opts` a keyword list
+  (any list satisfies the guard; impls are expected to treat it as a keyword
+  list).
   """
-  @spec compile(module(), Program.t(), [Dsxir.Example.t()], Dsxir.Metric.t(), keyword()) ::
-          result()
+  @spec compile(
+          module(),
+          Program.t(),
+          [Dsxir.Example.t()],
+          nil | Dsxir.Metric.t(),
+          keyword()
+        ) :: result()
+  def compile(impl, %Program{} = student, trainset, nil, opts)
+      when is_atom(impl) and is_list(trainset) and is_list(opts) do
+    impl.compile(student, trainset, nil, opts)
+  end
+
   def compile(impl, %Program{} = student, trainset, metric, opts)
       when is_atom(impl) and is_list(trainset) and is_function(metric, 3) and is_list(opts) do
     impl.compile(student, trainset, metric, opts)

@@ -85,5 +85,13 @@ defmodule Dsxir.OptimizerTest do
       assert {:error, %Trainset{reason: :empty, example: nil}} =
                Optimizer.compile(EmptyOptimizer, student, [], &metric/3, [])
     end
+
+    test "metric may be nil for optimizers that do not need one" do
+      student = Program.new(Prog)
+      trainset = [ex("q", "a")]
+
+      assert {:ok, %Program{}, _stats} =
+               Optimizer.compile(EmptyOptimizer, student, trainset, nil, [])
+    end
   end
 end

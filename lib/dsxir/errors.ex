@@ -29,7 +29,10 @@ defmodule Dsxir.Errors do
       Dsxir.Module.Runtime,
       Dsxir.Settings,
       "Dsxir.Adapter.",
-      "Dsxir.Predictor."
+      "Dsxir.Predictor.",
+      "Dsxir.DemoStrategy.",
+      Dsxir.Optimizer.KNNFewShot,
+      Dsxir.Retrieval.Cosine
     ]
 
   @doc """

@@ -15,6 +15,8 @@ defmodule Dsxir.Artifact do
   signatures, raising `Dsxir.Errors.Invalid.SignatureMismatch` on any drift.
   """
 
+  alias Dsxir.DemoStrategy.KNN
+  alias Dsxir.DemoStrategy.KNN.Entry
   alias Dsxir.Errors
   alias Dsxir.Module.Info, as: ModuleInfo
   alias Dsxir.Program
@@ -76,9 +78,52 @@ defmodule Dsxir.Artifact do
   end
 
   defp encode_predictor(%Program.State{} = state, signature) do
-    %{
+    base = %{
       "instructions" => instructions_for(state, signature),
       "demos" => Enum.map(state.demos, &encode_demo/1)
+    }
+
+    case state.demo_strategy do
+      nil -> base
+      strategy -> Map.put(base, "demo_strategy", encode_demo_strategy(strategy))
+    end
+  end
+
+  defp encode_demo_strategy(%KNN{} = strategy), do: encode_knn(strategy)
+
+  defp encode_knn(%KNN{
+         k: k,
+         embedder: {impl, config},
+         embedder_id: embedder_id,
+         embed_fields: embed_fields,
+         entries: entries
+       }) do
+    stripped = KNN.strip_credentials(config)
+
+    %{
+      "kind" => "knn",
+      "k" => k,
+      "embedder" => %{
+        "impl" => Atom.to_string(impl),
+        "config" => encode_embedder_config(stripped)
+      },
+      "embedder_id" => embedder_id,
+      "embed_fields" => encode_embed_fields(embed_fields),
+      "entries" => Enum.map(entries, &encode_entry/1)
+    }
+  end
+
+  defp encode_embedder_config(config) when is_list(config) do
+    Map.new(config, fn {k, v} -> {Atom.to_string(k), v} end)
+  end
+
+  defp encode_embed_fields(:all), do: "all"
+  defp encode_embed_fields(fields) when is_list(fields), do: Enum.map(fields, &Atom.to_string/1)
+
+  defp encode_entry(%Entry{embedding: embedding, example: %Dsxir.Example{data: data}}) do
+    %{
+      "embedding" => embedding,
+      "example" => stringify_keys(data)
     }
   end
 
@@ -257,28 +302,41 @@ defmodule Dsxir.Artifact do
   defp hydrate(target_module, decls, predictors_payload, metadata_payload) do
     fresh = Program.new(target_module)
 
-    hydrated_predictors =
-      Enum.reduce(decls, fresh.predictors, fn decl, acc ->
+    result =
+      Enum.reduce_while(decls, {:ok, fresh.predictors}, fn decl, {:ok, acc} ->
         payload = Map.get(predictors_payload, Atom.to_string(decl.name), %{})
         input_names = Enum.map(SignatureRuntime.inputs(decl.signature), & &1.name)
         demos = build_demos(Map.get(payload, "demos", []), input_names)
         instructions_override = payload["instructions"]
 
-        state = %Program.State{
-          demos: demos,
-          instructions_override: instructions_override
-        }
+        case decode_demo_strategy(Map.get(payload, "demo_strategy"), input_names) do
+          {:ok, demo_strategy} ->
+            state = %Program.State{
+              demos: demos,
+              demo_strategy: demo_strategy,
+              instructions_override: instructions_override
+            }
 
-        Map.put(acc, decl.name, state)
+            {:cont, {:ok, Map.put(acc, decl.name, state)}}
+
+          {:error, exc} ->
+            {:halt, {:error, exc}}
+        end
       end)
 
-    prog = %{
-      fresh
-      | predictors: hydrated_predictors,
-        metadata: hydrate_metadata(metadata_payload)
-    }
+    case result do
+      {:ok, hydrated_predictors} ->
+        prog = %{
+          fresh
+          | predictors: hydrated_predictors,
+            metadata: hydrate_metadata(metadata_payload)
+        }
 
-    {:ok, prog}
+        {:ok, prog}
+
+      {:error, exc} ->
+        {:error, exc}
+    end
   end
 
   defp build_demos(demo_maps, input_names) when is_list(demo_maps) do
@@ -330,5 +388,99 @@ defmodule Dsxir.Artifact do
       )
 
       nil
+  end
+
+  defp decode_demo_strategy(nil, _input_names), do: {:ok, nil}
+
+  defp decode_demo_strategy(%{"kind" => "knn"} = payload, input_names) do
+    with {:ok, embedder} <- decode_embedder(Map.fetch!(payload, "embedder")),
+         {:ok, embed_fields} <- decode_embed_fields(Map.fetch!(payload, "embed_fields")) do
+      strategy = %KNN{
+        k: Map.fetch!(payload, "k"),
+        embedder: embedder,
+        embedder_id: Map.fetch!(payload, "embedder_id"),
+        embed_fields: embed_fields,
+        entries: Enum.map(Map.get(payload, "entries", []), &decode_entry(&1, input_names))
+      }
+
+      {:ok, strategy}
+    end
+  end
+
+  defp decode_demo_strategy(%{"kind" => other}, _input_names) do
+    {:error,
+     %Errors.Invalid.Configuration{
+       key: :demo_strategy,
+       value: other,
+       reason: :unknown_kind
+     }}
+  end
+
+  defp decode_embedder(%{"impl" => impl_string, "config" => config_map}) do
+    impl = String.to_existing_atom(impl_string)
+
+    case decode_embedder_config(config_map) do
+      {:ok, kv} -> {:ok, {impl, kv}}
+      {:error, exc} -> {:error, exc}
+    end
+  rescue
+    ArgumentError ->
+      {:error,
+       %Errors.Invalid.Configuration{
+         key: :embedder,
+         value: impl_string,
+         reason: :unknown_impl
+       }}
+  end
+
+  defp decode_embedder_config(config_map) do
+    Enum.reduce_while(config_map, {:ok, []}, fn {k, v}, {:ok, acc} ->
+      case safe_existing_atom(k) do
+        nil ->
+          {:halt,
+           {:error,
+            %Errors.Invalid.Configuration{
+              key: :embedder,
+              value: k,
+              reason: :unknown_config_key
+            }}}
+
+        atom ->
+          {:cont, {:ok, [{atom, v} | acc]}}
+      end
+    end)
+    |> case do
+      {:ok, kv} -> {:ok, Enum.reverse(kv)}
+      err -> err
+    end
+  end
+
+  defp decode_embed_fields("all"), do: {:ok, :all}
+
+  defp decode_embed_fields(fields) when is_list(fields) do
+    Enum.reduce_while(fields, {:ok, []}, fn name, {:ok, acc} ->
+      case safe_existing_atom(name) do
+        nil ->
+          {:halt,
+           {:error,
+            %Errors.Invalid.Configuration{
+              key: :embed_fields,
+              value: name,
+              reason: :unknown_field
+            }}}
+
+        atom ->
+          {:cont, {:ok, [atom | acc]}}
+      end
+    end)
+    |> case do
+      {:ok, atoms} -> {:ok, Enum.reverse(atoms)}
+      err -> err
+    end
+  end
+
+  defp decode_entry(%{"embedding" => embedding, "example" => example_data}, input_names) do
+    data = Map.new(example_data, &reatomize_key/1)
+    %Entry{embedding: embedding, example: Dsxir.Example.new(data, input_keys: input_names)}
   end
 end

@@ -1,0 +1,988 @@
+<!-- livebook:{"persist_outputs":true} -->
+
+# Support Ticket Triage with KNN Few-Shot
+
+```elixir
+Mix.install(
+  [
+    {:dsxir, path: Path.expand("../..", __DIR__)},
+    {:kino, "~> 0.19"}
+  ]
+)
+```
+
+## Overview
+
+`Dsxir.Optimizer.KNNFewShot` resolves demos *per call*. Instead of picking
+one set of demos at compile time and using them on every input,
+`KNNFewShot` embeds the trainset once, then at each predictor invocation
+embeds the live inputs and retrieves the K nearest examples as demos for
+*that* call.
+
+This wins when the trainset is **heterogeneous** — when different inputs
+benefit from different demos. A static `LabeledFewShot` picks one
+representative slice; KNN matches each query to its own neighbors.
+
+This tutorial walks through a customer support triage task with that
+shape: a small ticket queue spanning billing, technical, account, and
+shipping problems. A billing complaint should imitate prior billing
+responses, not prior shipping ones, and vice versa.
+
+When run from a checkout of `dsxir`, `Mix.install/1` above resolves the
+library from the parent directory. If you launch this livebook from
+elsewhere, replace the `path:` line with the dsxir version.
+
+## Configuring the LM and the embedder
+
+`KNNFewShot` snapshots its embedder at compile time and uses it forever
+after. That means **the generation model and the retrieval embedder are
+independently configured** — a common production shape (cheap small
+embedder + strong generation model).
+
+```elixir
+Dsxir.configure(
+  lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-4o-mini"]},
+  adapter: Dsxir.Adapter.Chat
+)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
+```elixir
+api_key_input = Kino.Input.password("OPENAI_API_KEY")
+```
+
+```elixir
+lm_frame = fn ->
+  api_key = Kino.Input.read(api_key_input)
+
+  [
+    lm:
+      {Dsxir.LM.Sycophant,
+       [model: "openai:gpt-4o-mini", api_key: api_key, temperature: 0.0]}
+  ]
+end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+#Function<43.113135111/0 in :erl_eval.expr/6>
+```
+
+```elixir
+embedder_tuple = fn ->
+  api_key = Kino.Input.read(api_key_input)
+
+  {Dsxir.LM.Sycophant,
+   [model: "openai:text-embedding-3-small", api_key: api_key]}
+end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+#Function<43.113135111/0 in :erl_eval.expr/6>
+```
+
+## Signature and module
+
+One predictor, one signature. We deliberately keep the program small so
+the KNN behavior is visible without other moving parts.
+
+```elixir
+defmodule MyApp.Tickets.TriageTicket do
+  use Dsxir.Signature
+
+  @categories ~w(billing technical account shipping)
+  @sentiments ~w(frustrated neutral happy)
+
+  signature do
+    instruction """
+    Triage an inbound customer support ticket. Read the subject and body,
+    decide the topical category, gauge the customer's sentiment, and
+    propose a single next action for the support agent.
+    """
+
+    input :subject, :string
+    input :body, :string
+
+    output :category, Zoi.enum(@categories),
+      desc: "The topical bucket for routing the ticket."
+    output :sentiment, Zoi.enum(@sentiments),
+      desc: "The customer's emotional tenor in the message."
+    output :next_action, :string,
+      desc: "A single concrete next step for the agent (one short sentence)."
+  end
+end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+{:module, MyApp.Tickets.TriageTicket, <<70, 79, 82, 49, 0, 0, 146, ...>>, ...}
+```
+
+```elixir
+defmodule MyApp.Tickets.Triage do
+  use Dsxir.Module
+
+  predictor :triage, Dsxir.Predictor.Predict,
+    signature: MyApp.Tickets.TriageTicket
+
+  def forward(prog, %{subject: s, body: b}) do
+    {prog, pred} = call(prog, :triage, %{subject: s, body: b})
+    {prog, pred}
+  end
+end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+{:module, MyApp.Tickets.Triage, <<70, 79, 82, 49, 0, 0, 83, ...>>, ...}
+```
+
+Why `Dsxir.Predictor.Predict` and not `ChainOfThought`? KNN's value is
+that **good neighbors arrive in the prompt as exemplars**. Layering CoT on
+top works fine but mixes two effects, which makes it harder to see what
+KNN is doing. Once you trust the approach, swap to `ChainOfThought` for
+production.
+
+## A heterogeneous trainset
+
+Sixteen tickets across four categories. The heterogeneity is the point:
+no static demo subset is the right context for every category.
+
+```elixir
+trainset_data = [
+  # Billing
+  %{
+    subject: "Double charge on invoice",
+    body: "I was charged twice for the same order on August 14th. Please refund the duplicate $89.99 charge.",
+    category: "billing",
+    sentiment: "frustrated",
+    next_action: "Verify duplicate charge in payment processor and issue refund."
+  },
+  %{
+    subject: "Question about my subscription tier",
+    body: "Hi, I'm on the Pro plan and I'd like to understand what's included before my renewal next month.",
+    category: "billing",
+    sentiment: "neutral",
+    next_action: "Send Pro plan feature breakdown and renewal date."
+  },
+  %{
+    subject: "Refund processed quickly, thanks!",
+    body: "Just wanted to say the refund for my cancelled order came through within a day. Great service.",
+    category: "billing",
+    sentiment: "happy",
+    next_action: "Acknowledge thanks and close ticket."
+  },
+  %{
+    subject: "Unexpected $5 charge",
+    body: "There's a $5 charge on my card from your company that I don't recognize. What is this for?",
+    category: "billing",
+    sentiment: "neutral",
+    next_action: "Look up charge by amount and timestamp; explain to customer."
+  },
+
+  # Technical
+  %{
+    subject: "App crashes on startup after update",
+    body: "Since yesterday's update, the desktop app crashes immediately when I launch it. macOS 14.5. Already reinstalled.",
+    category: "technical",
+    sentiment: "frustrated",
+    next_action: "Request crash log and check macOS 14.5 compatibility of latest build."
+  },
+  %{
+    subject: "API returns 500 on PATCH /widgets",
+    body: "Hitting your PATCH /widgets endpoint returns a 500 with no body. POST and GET on the same resource work fine.",
+    category: "technical",
+    sentiment: "neutral",
+    next_action: "Pull recent 500s for PATCH /widgets from logs; assign to platform team."
+  },
+  %{
+    subject: "Cannot install on Windows ARM",
+    body: "The installer says my architecture is unsupported. I'm on a Surface Pro X (Windows ARM). Is there a workaround?",
+    category: "technical",
+    sentiment: "neutral",
+    next_action: "Check Windows ARM roadmap and respond with status or workaround."
+  },
+  %{
+    subject: "Export bug producing empty CSV",
+    body: "Hitting Export to CSV from the dashboard produces a 0-byte file. Reproduced on Chrome and Firefox.",
+    category: "technical",
+    sentiment: "frustrated",
+    next_action: "Reproduce export with a test account; file bug with frontend team."
+  },
+
+  # Account
+  %{
+    subject: "Password reset link broken",
+    body: "I clicked the reset link from your email and got 'token invalid'. Tried twice. Email is jane@example.com.",
+    category: "account",
+    sentiment: "frustrated",
+    next_action: "Manually trigger a fresh reset link for jane@example.com."
+  },
+  %{
+    subject: "Can I rename my workspace?",
+    body: "We're rebranding and want to rename our workspace from 'AcmeCo' to 'Acme Inc'. Is that possible?",
+    category: "account",
+    sentiment: "neutral",
+    next_action: "Walk through workspace rename in Settings → Organization."
+  },
+  %{
+    subject: "Locked out after too many attempts",
+    body: "I got locked out after typing the wrong password a few times. Please unlock my account.",
+    category: "account",
+    sentiment: "frustrated",
+    next_action: "Verify identity, unlock account, advise password manager."
+  },
+  %{
+    subject: "Deleting my account",
+    body: "I'd like to fully delete my account and all my data. What's the process?",
+    category: "account",
+    sentiment: "neutral",
+    next_action: "Send account deletion form and 30-day data retention policy."
+  },
+
+  # Shipping
+  %{
+    subject: "Tracking number not updating",
+    body: "Order #44521 has been 'in transit' for six days. Tracking hasn't moved. Estimated delivery was three days ago.",
+    category: "shipping",
+    sentiment: "frustrated",
+    next_action: "File carrier trace for tracking 1Z44521; offer reshipment if lost."
+  },
+  %{
+    subject: "Wrong item shipped",
+    body: "I ordered the blue model and received the red. Order #19384. Happy to send the wrong one back.",
+    category: "shipping",
+    sentiment: "neutral",
+    next_action: "Send return label for #19384 and ship the correct blue model."
+  },
+  %{
+    subject: "Package arrived early!",
+    body: "Got my order two days before the estimate. Nice surprise.",
+    category: "shipping",
+    sentiment: "happy",
+    next_action: "Acknowledge thanks and close ticket."
+  },
+  %{
+    subject: "Change delivery address mid-shipment",
+    body: "Order #88102 is already in transit but I need it sent to my new address instead. Can you redirect it?",
+    category: "shipping",
+    sentiment: "neutral",
+    next_action: "Check carrier redirect options for tracking #88102 and confirm with customer."
+  }
+]
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+[
+  %{
+    category: "billing",
+    body: "I was charged twice for the same order on August 14th. Please refund the duplicate $89.99 charge.",
+    subject: "Double charge on invoice",
+    sentiment: "frustrated",
+    next_action: "Verify duplicate charge in payment processor and issue refund."
+  },
+  %{
+    category: "billing",
+    body: "Hi, I'm on the Pro plan and I'd like to understand what's included before my renewal next month.",
+    subject: "Question about my subscription tier",
+    sentiment: "neutral",
+    next_action: "Send Pro plan feature breakdown and renewal date."
+  },
+  %{
+    category: "billing",
+    body: "Just wanted to say the refund for my cancelled order came through within a day. Great service.",
+    subject: "Refund processed quickly, thanks!",
+    sentiment: "happy",
+    next_action: "Acknowledge thanks and close ticket."
+  },
+  %{
+    category: "billing",
+    body: "There's a $5 charge on my card from your company that I don't recognize. What is this for?",
+    subject: "Unexpected $5 charge",
+    sentiment: "neutral",
+    next_action: "Look up charge by amount and timestamp; explain to customer."
+  },
+  %{
+    category: "technical",
+    body: "Since yesterday's update, the desktop app crashes immediately when I launch it. macOS 14.5. Already reinstalled.",
+    subject: "App crashes on startup after update",
+    sentiment: "frustrated",
+    next_action: "Request crash log and check macOS 14.5 compatibility of latest build."
+  },
+  %{
+    category: "technical",
+    body: "Hitting your PATCH /widgets endpoint returns a 500 with no body. POST and GET on the same resource work fine.",
+    subject: "API returns 500 on PATCH /widgets",
+    sentiment: "neutral",
+    next_action: "Pull recent 500s for PATCH /widgets from logs; assign to platform team."
+  },
+  %{
+    category: "technical",
+    body: "The installer says my architecture is unsupported. I'm on a Surface Pro X (Windows ARM). Is there a workaround?",
+    subject: "Cannot install on Windows ARM",
+    sentiment: "neutral",
+    next_action: "Check Windows ARM roadmap and respond with status or workaround."
+  },
+  %{
+    category: "technical",
+    body: "Hitting Export to CSV from the dashboard produces a 0-byte file. Reproduced on Chrome and Firefox.",
+    subject: "Export bug producing empty CSV",
+    sentiment: "frustrated",
+    next_action: "Reproduce export with a test account; file bug with frontend team."
+  },
+  %{
+    category: "account",
+    body: "I clicked the reset link from your email and got 'token invalid'. Tried twice. Email is jane@example.com.",
+    subject: "Password reset link broken",
+    sentiment: "frustrated",
+    next_action: "Manually trigger a fresh reset link for jane@example.com."
+  },
+  %{
+    category: "account",
+    body: "We're rebranding and want to rename our workspace from 'AcmeCo' to 'Acme Inc'. Is that possible?",
+    subject: "Can I rename my workspace?",
+    sentiment: "neutral",
+    next_action: "Walk through workspace rename in Settings → Organization."
+  },
+  %{
+    category: "account",
+    body: "I got locked out after typing the wrong password a few times. Please unlock my account.",
+    subject: "Locked out after too many attempts",
+    sentiment: "frustrated",
+    next_action: "Verify identity, unlock account, advise password manager."
+  },
+  %{
+    category: "account",
+    body: "I'd like to fully delete my account and all my data. What's the process?",
+    subject: "Deleting my account",
+    sentiment: "neutral",
+    next_action: "Send account deletion form and 30-day data retention policy."
+  },
+  %{
+    category: "shipping",
+    body: "Order #44521 has been 'in transit' for six days. Tracking hasn't moved. Estimated delivery was three days ago.",
+    subject: "Tracking number not updating",
+    sentiment: "frustrated",
+    next_action: "File carrier trace for tracking 1Z44521; offer reshipment if lost."
+  },
+  %{
+    category: "shipping",
+    body: "I ordered the blue model and received the red. Order #19384. Happy to send the wrong one back.",
+    subject: "Wrong item shipped",
+    sentiment: "neutral",
+    next_action: "Send return label for #19384 and ship the correct blue model."
+  },
+  %{
+    category: "shipping",
+    body: "Got my order two days before the estimate. Nice surprise.",
+    subject: "Package arrived early!",
+    sentiment: "happy",
+    next_action: "Acknowledge thanks and close ticket."
+  },
+  %{
+    category: "shipping",
+    body: "Order #88102 is already in transit but I need it sent to my new address instead. Can you redirect it?",
+    subject: "Change delivery address mid-shipment",
+    sentiment: "neutral",
+    next_action: "Check carrier redirect options for tracking #88102 and confirm with customer."
+  }
+]
+```
+
+```elixir
+trainset =
+  Enum.map(trainset_data, fn row ->
+    Dsxir.Example.new(row, input_keys: [:subject, :body])
+  end)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+[
+  #Dsxir.Example<inputs: %{
+    body: "I was charged twice for the same order on August 14th. Please refund the duplicate $89.99 charge.",
+    subject: "Double charge on invoice"
+  }, labels: %{
+    category: "billing",
+    sentiment: "frustrated",
+    next_action: "Verify duplicate charge in payment processor and issue refund."
+  }>,
+  #Dsxir.Example<inputs: %{
+    body: "Hi, I'm on the Pro plan and I'd like to understand what's included before my renewal next month.",
+    subject: "Question about my subscription tier"
+  }, labels: %{
+    category: "billing",
+    sentiment: "neutral",
+    next_action: "Send Pro plan feature breakdown and renewal date."
+  }>,
+  #Dsxir.Example<inputs: %{
+    body: "Just wanted to say the refund for my cancelled order came through within a day. Great service.",
+    subject: "Refund processed quickly, thanks!"
+  }, labels: %{
+    category: "billing",
+    sentiment: "happy",
+    next_action: "Acknowledge thanks and close ticket."
+  }>,
+  #Dsxir.Example<inputs: %{
+    body: "There's a $5 charge on my card from your company that I don't recognize. What is this for?",
+    subject: "Unexpected $5 charge"
+  }, labels: %{
+    category: "billing",
+    sentiment: "neutral",
+    next_action: "Look up charge by amount and timestamp; explain to customer."
+  }>,
+  #Dsxir.Example<inputs: %{
+    body: "Since yesterday's update, the desktop app crashes immediately when I launch it. macOS 14.5. Already reinstalled.",
+    subject: "App crashes on startup after update"
+  }, labels: %{
+    category: "technical",
+    sentiment: "frustrated",
+    next_action: "Request crash log and check macOS 14.5 compatibility of latest build."
+  }>,
+  #Dsxir.Example<inputs: %{
+    body: "Hitting your PATCH /widgets endpoint returns a 500 with no body. POST and GET on the same resource work fine.",
+    subject: "API returns 500 on PATCH /widgets"
+  }, labels: %{
+    category: "technical",
+    sentiment: "neutral",
+    next_action: "Pull recent 500s for PATCH /widgets from logs; assign to platform team."
+  }>,
+  #Dsxir.Example<inputs: %{
+    body: "The installer says my architecture is unsupported. I'm on a Surface Pro X (Windows ARM). Is there a workaround?",
+    subject: "Cannot install on Windows ARM"
+  }, labels: %{
+    category: "technical",
+    sentiment: "neutral",
+    next_action: "Check Windows ARM roadmap and respond with status or workaround."
+  }>,
+  #Dsxir.Example<inputs: %{
+    body: "Hitting Export to CSV from the dashboard produces a 0-byte file. Reproduced on Chrome and Firefox.",
+    subject: "Export bug producing empty CSV"
+  }, labels: %{
+    category: "technical",
+    sentiment: "frustrated",
+    next_action: "Reproduce export with a test account; file bug with frontend team."
+  }>,
+  #Dsxir.Example<inputs: %{
+    body: "I clicked the reset link from your email and got 'token invalid'. Tried twice. Email is jane@example.com.",
+    subject: "Password reset link broken"
+  }, labels: %{
+    category: "account",
+    sentiment: "frustrated",
+    next_action: "Manually trigger a fresh reset link for jane@example.com."
+  }>,
+  #Dsxir.Example<inputs: %{
+    body: "We're rebranding and want to rename our workspace from 'AcmeCo' to 'Acme Inc'. Is that possible?",
+    subject: "Can I rename my workspace?"
+  }, labels: %{
+    category: "account",
+    sentiment: "neutral",
+    next_action: "Walk through workspace rename in Settings → Organization."
+  }>,
+  #Dsxir.Example<inputs: %{
+    body: "I got locked out after typing the wrong password a few times. Please unlock my account.",
+    subject: "Locked out after too many attempts"
+  }, labels: %{
+    category: "account",
+    sentiment: "frustrated",
+    next_action: "Verify identity, unlock account, advise password manager."
+  }>,
+  #Dsxir.Example<inputs: %{
+    body: "I'd like to fully delete my account and all my data. What's the process?",
+    subject: "Deleting my account"
+  }, labels: %{
+    category: "account",
+    sentiment: "neutral",
+    next_action: "Send account deletion form and 30-day data retention policy."
+  }>,
+  #Dsxir.Example<inputs: %{
+    body: "Order #44521 has been 'in transit' for six days. Tracking hasn't moved. Estimated delivery was three days ago.",
+    subject: "Tracking number not updating"
+  }, labels: %{
+    category: "shipping",
+    sentiment: "frustrated",
+    next_action: "File carrier trace for tracking 1Z44521; offer reshipment if lost."
+  }>,
+  #Dsxir.Example<inputs: %{
+    body: "I ordered the blue model and received the red. Order #19384. Happy to send the wrong one back.",
+    subject: "Wrong item shipped"
+  }, labels: %{
+    category: "shipping",
+    sentiment: "neutral",
+    next_action: "Send return label for #19384 and ship the correct blue model."
+  }>,
+  #Dsxir.Example<inputs: %{
+    body: "Got my order two days before the estimate. Nice surprise.",
+    subject: "Package arrived early!"
+  }, labels: %{
+    category: "shipping",
+    sentiment: "happy",
+    next_action: "Acknowledge thanks and close ticket."
+  }>,
+  #Dsxir.Example<inputs: %{
+    body: "Order #88102 is already in transit but I need it sent to my new address instead. Can you redirect it?",
+    subject: "Change delivery address mid-shipment"
+  }, labels: %{
+    category: "shipping",
+    sentiment: "neutral",
+    next_action: "Check carrier redirect options for tracking #88102 and confirm with customer."
+  }>
+]
+```
+
+`input_keys` marks which fields flow into `forward/2`. The rest become
+labels the metric will read.
+
+## Sanity check: zero-shot baseline
+
+Run the program on a held-out ticket with no demos. This is the floor we
+want KNN to beat.
+
+```elixir
+held_out = %{
+  subject: "Charged twice for last month",
+  body: "Looking at my statement, I see two charges of $29.00 from your service on August 1st. Only signed up once."
+}
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{
+  body: "Looking at my statement, I see two charges of $29.00 from your service on August 1st. Only signed up once.",
+  subject: "Charged twice for last month"
+}
+```
+
+```elixir
+Dsxir.context(lm_frame.(), fn ->
+  prog = Dsxir.Program.new(MyApp.Tickets.Triage)
+  {_prog, pred} = MyApp.Tickets.Triage.forward(prog, held_out)
+
+  %{
+    category: pred[:category],
+    sentiment: pred[:sentiment],
+    next_action: pred[:next_action]
+  }
+end)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{
+  category: "billing",
+  sentiment: "frustrated",
+  next_action: "Investigate the duplicate charges and issue a refund if necessary."
+}
+```
+
+## Compiling with KNNFewShot
+
+Compile the program with the trainset and the embedder. `KNNFewShot`
+does **not** call the LM during compile — only the embedder. No traces,
+no metric evaluation. Just embed every example once and store the
+vectors on the predictor's state.
+
+```elixir
+tmp_path = Path.join(System.tmp_dir!(), "tickets_knn.v1.json")
+
+Dsxir.context(lm_frame.(), fn ->
+  prog = Dsxir.Program.new(MyApp.Tickets.Triage)
+
+  {:ok, compiled, stats} =
+    Dsxir.compile(
+      Dsxir.Optimizer.KNNFewShot,
+      prog,
+      trainset,
+      nil,
+      k: 3,
+      embedder: embedder_tuple.()
+    )
+
+  Dsxir.save!(compiled, tmp_path)
+
+  %{stats: stats, saved_to: tmp_path}
+end)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{
+  stats: %{
+    k: 3,
+    embedder_id: "openai:text-embedding-3-small",
+    entries_per_predictor: %{triage: 16},
+    embedding_tokens: 513,
+    compile_duration_ms: 1196
+  },
+  saved_to: "/var/folders/89/2p5fpn1s6010ds0ck4rct_bc0000gn/T/tickets_knn.v1.json"
+}
+```
+
+The interesting `stats` keys:
+
+* `entries_per_predictor: %{triage: 16}` — every example was indexed.
+* `embedding_tokens` — the only LM cost paid at compile time.
+* `embedder_id: "openai:text-embedding-3-small"` — locked onto the strategy,
+  so inference uses the same model regardless of the active `:lm` setting.
+
+`compile/4` accepts the metric argument for interface uniformity with the
+other optimizers but ignores it. KNN doesn't need a metric to build its
+index — examples are not scored, only embedded.
+
+## Loading and running on the held-out ticket
+
+```elixir
+Dsxir.context(lm_frame.(), fn ->
+  prog = Dsxir.load!(MyApp.Tickets.Triage, tmp_path)
+  {_prog, pred} = MyApp.Tickets.Triage.forward(prog, held_out)
+
+  %{
+    category: pred[:category],
+    sentiment: pred[:sentiment],
+    next_action: pred[:next_action]
+  }
+end)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{
+  category: "billing",
+  sentiment: "frustrated",
+  next_action: "Investigate the duplicate charge and process a refund if confirmed."
+}
+```
+
+The compiled program has `state.demo_strategy: %KNN{...}` and
+`state.demos: []`. At call time, `Dsxir.Module.Runtime.call/4` notices
+the strategy, embeds the live inputs, retrieves the three nearest
+trainset examples by cosine similarity, and passes them to the adapter
+as if they were static demos.
+
+## Watching KNN pick neighbors
+
+Telemetry tells us which examples were chosen. Attach a handler before
+the call to see the events.
+
+```elixir
+ref =
+  :telemetry_test.attach_event_handlers(self(), [
+    [:dsxir, :knn, :resolve],
+    [:dsxir, :knn, :insufficient_entries]
+  ])
+
+probe_tickets = [
+  %{
+    subject: "Refund for cancelled order",
+    body: "I cancelled order #91922 yesterday but the charge is still on my card. Please refund."
+  },
+  %{
+    subject: "App freezes when exporting large reports",
+    body: "Exporting any report over 50MB freezes the app for 30s and then crashes. Reproduced on two machines."
+  }
+]
+
+tmp_path = Path.join(System.tmp_dir!(), "tickets_knn.v1.json")
+
+Dsxir.context(lm_frame.(), fn ->
+  prog = Dsxir.load!(MyApp.Tickets.Triage, tmp_path)
+
+  Enum.map(probe_tickets, fn ticket ->
+    {_prog, pred} = MyApp.Tickets.Triage.forward(prog, ticket)
+    pred[:category]
+  end)
+end)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+["billing", "technical"]
+```
+
+```elixir
+flush_events = fn ->
+  flusher = fn flusher ->
+    receive do
+      {[:dsxir, :knn, :resolve], _ref, meas, meta} ->
+        [%{event: :resolve, k_returned: meas.k_returned, predictor: meta.predictor}
+         | flusher.(flusher)]
+    after
+      0 -> []
+    end
+  end
+
+  flusher.(flusher)
+end
+
+flush_events.()
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+[
+  %{predictor: :triage, k_returned: 3, event: :resolve},
+  %{predictor: :triage, k_returned: 3, event: :resolve}
+]
+```
+
+Each `:resolve` event includes the predictor name, the K returned, and
+the elapsed times. In production you'd subscribe a real handler that
+forwards to your observability pipeline; the same event is what
+`telemetry_test.attach_event_handlers/2` lets us inspect from a test.
+
+## Comparing with LabeledFewShot
+
+Use the same trainset, but with `LabeledFewShot` — a fixed slice of demos
+applied to every call. This sets the baseline KNN is trying to beat.
+
+```elixir
+lfs_path = Path.join(System.tmp_dir!(), "tickets_lfs.v1.json")
+
+Dsxir.context(lm_frame.(), fn ->
+  prog = Dsxir.Program.new(MyApp.Tickets.Triage)
+
+  {:ok, lfs_compiled, _stats} =
+    Dsxir.compile(
+      Dsxir.Optimizer.LabeledFewShot,
+      prog,
+      trainset,
+      nil,
+      max_labeled_demos: 4,
+      deterministic: true
+    )
+
+  Dsxir.save!(lfs_compiled, lfs_path)
+  lfs_path
+end)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+"/var/folders/89/2p5fpn1s6010ds0ck4rct_bc0000gn/T/tickets_lfs.v1.json"
+```
+
+Both compiled artifacts deploy identically — same `Dsxir.save!`, same
+`Dsxir.load!`, same forward call. The only difference is which set of
+demos the predictor sees on each call.
+
+A small metric makes the comparison concrete:
+
+```elixir
+defmodule MyApp.Tickets.Metric do
+  @spec triage(Dsxir.Example.t(), Dsxir.Prediction.t(), nil | list()) :: float()
+  def triage(%Dsxir.Example{data: data}, %Dsxir.Prediction{fields: f}, _trace) do
+    cat = if data.category == f.category, do: 1.0, else: 0.0
+    sent = if data.sentiment == f.sentiment, do: 1.0, else: 0.0
+    (cat + sent) / 2.0
+  end
+end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+{:module, MyApp.Tickets.Metric, <<70, 79, 82, 49, 0, 0, 12, ...>>, ...}
+```
+
+A held-out set of four tickets spanning all four categories:
+
+```elixir
+devset_data = [
+  %{
+    subject: "Yearly billing question",
+    body: "I'd like to switch from monthly to annual billing. Is there a discount?",
+    category: "billing",
+    sentiment: "neutral",
+    next_action: ""
+  },
+  %{
+    subject: "Login keeps redirecting",
+    body: "Every time I log in, I get redirected back to the login page. Cleared cookies. No change.",
+    category: "technical",
+    sentiment: "frustrated",
+    next_action: ""
+  },
+  %{
+    subject: "Forgot which email I signed up with",
+    body: "I have two email addresses and I can't remember which one I used to register. Help?",
+    category: "account",
+    sentiment: "neutral",
+    next_action: ""
+  },
+  %{
+    subject: "Order delayed past estimate",
+    body: "Order #55401 was supposed to arrive last Thursday. Still no update. What's going on?",
+    category: "shipping",
+    sentiment: "frustrated",
+    next_action: ""
+  }
+]
+
+devset =
+  Enum.map(devset_data, fn row ->
+    Dsxir.Example.new(row, input_keys: [:subject, :body])
+  end)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+[
+  #Dsxir.Example<inputs: %{
+    body: "I'd like to switch from monthly to annual billing. Is there a discount?",
+    subject: "Yearly billing question"
+  }, labels: %{category: "billing", sentiment: "neutral", next_action: ""}>,
+  #Dsxir.Example<inputs: %{
+    body: "Every time I log in, I get redirected back to the login page. Cleared cookies. No change.",
+    subject: "Login keeps redirecting"
+  }, labels: %{category: "technical", sentiment: "frustrated", next_action: ""}>,
+  #Dsxir.Example<inputs: %{
+    body: "I have two email addresses and I can't remember which one I used to register. Help?",
+    subject: "Forgot which email I signed up with"
+  }, labels: %{category: "account", sentiment: "neutral", next_action: ""}>,
+  #Dsxir.Example<inputs: %{
+    body: "Order #55401 was supposed to arrive last Thursday. Still no update. What's going on?",
+    subject: "Order delayed past estimate"
+  }, labels: %{category: "shipping", sentiment: "frustrated", next_action: ""}>
+]
+```
+
+```elixir
+ev = %Dsxir.Evaluate{
+  devset: devset,
+  metric: &MyApp.Tickets.Metric.triage/3,
+  num_threads: 2,
+  max_errors: 1
+}
+
+Dsxir.context(lm_frame.(), fn ->
+  knn = Dsxir.load!(MyApp.Tickets.Triage, tmp_path)
+  lfs = Dsxir.load!(MyApp.Tickets.Triage, lfs_path)
+
+  %{
+    knn_score: Dsxir.evaluate(ev, knn).score,
+    lfs_score: Dsxir.evaluate(ev, lfs).score
+  }
+end)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{knn_score: 100.0, lfs_score: 100.0}
+```
+
+`score` is `metric_mean * 100` rounded to one decimal.
+
+If you ran the cells, you probably saw both optimizers score **100.0** on
+this four-example devset. That's not a bug — it's a ceiling effect:
+
+* `gpt-4o-mini` is strong enough to classify these four cleanly-separated
+  tickets (one per category) even from a zero-shot prompt.
+* Four examples is too small a sample to surface the difference between
+  KNN's per-call demos and LFS's static four.
+
+KNN's advantage materializes when at least one of the following holds:
+
+* **The categories are not cleanly separated** (e.g. billing-via-failed-payment
+  vs. account-locked-out-after-failed-payment — both routes use overlapping
+  vocabulary).
+* **The devset is large enough that a fraction near the decision boundary
+  shows up** — at 4 examples the variance dominates; at 50+ the lift
+  becomes statistically visible.
+* **The model is small enough that demos materially shift the answer** —
+  on a 4o-mini or larger generation model, prompt context past a certain
+  point yields diminishing returns; on a 7B local model, the right
+  exemplars often flip the prediction.
+
+To exercise the difference, try replacing `devset_data` above with a set
+of ambiguous tickets ("my subscription failed during checkout but I was
+charged anyway", "I cancelled my order but the carrier still delivered
+it") and re-run the evaluate cell. KNN's per-call retrieval is the lift
+that ambiguity rewards.
+
+On a homogeneous trainset — or a devset trivial enough that any prompt
+works — the two optimizers converge to the same score. That outcome is
+worth seeing too: it tells you KNN is not free money, and a static LFS
+deploys with one fewer dependency (no inference-time embed call).
+
+## Multi-tenant deployment
+
+KNN-compiled programs deploy with the same `Dsxir.context/2` pattern as
+any other compiled program. The embedder is locked onto the strategy at
+compile time, so per-tenant `Dsxir.context/2` blocks affect the
+*generation* model but not retrieval — exactly the behavior you want
+when tenants share an index.
+
+<!-- livebook:{"force_markdown":true} -->
+
+```elixir
+def call(conn, _opts) do
+  tenant = conn.assigns.tenant
+
+  Dsxir.context(
+    [
+      lm: {Dsxir.LM.Sycophant,
+           [model: tenant.model_id, api_key: tenant.api_key]},
+      metadata: %{tenant_id: tenant.id, request_id: conn.assigns.request_id}
+    ],
+    fn ->
+      program =
+        Dsxir.load!(MyApp.Tickets.Triage,
+                    "tenants/#{tenant.id}/tickets_knn.json")
+
+      {_program, pred} =
+        MyApp.Tickets.Triage.forward(program, %{
+          subject: conn.params["subject"],
+          body:    conn.params["body"]
+        })
+
+      json(conn, pred.fields)
+    end
+  )
+end
+```
+
+The `[:dsxir, :knn, :resolve]` event metadata carries `embedder_id` and
+the predictor name; merge with `settings.metadata` to attach per-tenant
+labels to retrieval cost dashboards.
+
+## Where to go next
+
+* **Tune `k`.** Default is 5. Higher `k` gives the LM more context but
+  costs prompt tokens linearly. Three to seven covers most real-world
+  cases.
+* **Constrain the embed surface.** Pass `embed_fields: [:subject]` to
+  embed only the subject line, or `embed_fields: [:body]` to ignore the
+  subject. Smaller embed text = cheaper, sometimes sharper retrieval.
+* **Compose with ChainOfThought.** Swap `Dsxir.Predictor.Predict` for
+  `Dsxir.Predictor.ChainOfThought` in the module declaration. KNN works
+  the same — it just feeds neighbors as demos to the CoT prompt.
+* **Watch `[:dsxir, :knn, :insufficient_entries]`** in production. When
+  the trainset shrinks (e.g. after a category becomes obsolete and you
+  prune its examples), this event fires before the LM is called. It is
+  a cheap early signal for "the index isn't dense enough anymore."
+* **Re-compile on trainset drift.** KNN does not auto-migrate demos
+  across versions. When you add or remove trainset examples, re-run
+  `Dsxir.compile/5`. The compile is cheap — embedder calls only, no
+  LM generation.

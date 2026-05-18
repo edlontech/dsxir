@@ -24,6 +24,8 @@ defmodule Dsxir.Module.Runtime do
   alias Dsxir.Program
   alias Dsxir.Settings
 
+  require Logger
+
   @doc """
   Dispatch a predictor call by `name` against `prog`. Runs the configured
   `call_plugs`, invokes the predictor implementation, records the trace, and
@@ -54,8 +56,10 @@ defmodule Dsxir.Module.Runtime do
 
         :ok = run_plugs(Settings.resolve(:call_plugs, []), ctx)
 
-        {new_state, prediction} = impl.forward(state, signature, inputs_map, merged_opts)
-        Dsxir.Trace.record({name, inputs_map, prediction, state.demos})
+        demos_for_call = resolve_demos(state, inputs_map, name)
+        state_for_call = %{state | demos: demos_for_call}
+        {new_state, prediction} = impl.forward(state_for_call, signature, inputs_map, merged_opts)
+        Dsxir.Trace.record({name, inputs_map, prediction, demos_for_call})
         {Program.put_state(prog, name, new_state), prediction}
 
       nil ->
@@ -94,5 +98,31 @@ defmodule Dsxir.Module.Runtime do
   defp per_call_opts_from_settings do
     adapter = Settings.resolve(:adapter)
     if adapter, do: [adapter: adapter], else: []
+  end
+
+  defp resolve_demos(%Program.State{demo_strategy: nil} = state, _inputs, _name), do: state.demos
+
+  defp resolve_demos(
+         %Program.State{demo_strategy: %Dsxir.DemoStrategy.KNN{} = strategy} = state,
+         inputs,
+         name
+       ) do
+    if state.demos != [] do
+      Logger.warning(
+        "Dsxir.Module.Runtime: predictor #{inspect(name)} has both static demos and demo_strategy; " <>
+          "demo_strategy wins, static demos ignored"
+      )
+
+      :telemetry.execute(
+        [:dsxir, :knn, :unexpected_static_demos],
+        %{},
+        Map.merge(
+          Settings.resolve(:metadata, %{}),
+          %{predictor: name, static_demo_count: length(state.demos)}
+        )
+      )
+    end
+
+    Dsxir.DemoStrategy.KNN.resolve(strategy, inputs, predictor: name)
   end
 end

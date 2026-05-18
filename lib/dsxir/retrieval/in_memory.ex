@@ -82,28 +82,7 @@ defmodule Dsxir.Retrieval.InMemory do
     end
   end
 
-  defp cosine(a, b) when length(a) == length(b) do
-    {dot, norm_a, norm_b} =
-      a
-      |> Enum.zip(b)
-      |> Enum.reduce({0.0, 0.0, 0.0}, fn {x, y}, {d, na, nb} ->
-        {d + x * y, na + x * x, nb + y * y}
-      end)
-
-    denom = :math.sqrt(norm_a) * :math.sqrt(norm_b)
-
-    if denom == 0.0, do: 0.0, else: dot / denom
-  end
-
-  defp cosine(a, b) do
-    raise %Dsxir.Errors.Framework.PredictorError{
-      predictor: __MODULE__,
-      signature: nil,
-      inner: nil,
-      reason: :vector_length_mismatch,
-      trajectory: %{lengths: {length(a), length(b)}}
-    }
-  end
+  defp cosine(a, b), do: Dsxir.Retrieval.Cosine.similarity(a, b)
 
   defimpl Inspect do
     import Inspect.Algebra

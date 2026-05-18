@@ -48,7 +48,8 @@ defmodule Dsxir.MixProject do
       main: "Dsxir",
       extras: [
         "README.md",
-        "guides/tutorials/email_extraction.livemd"
+        "guides/tutorials/email_extraction.livemd",
+        "guides/tutorials/knn_few_shot.livemd"
       ],
       groups_for_extras: [
         Tutorials: ~r"guides/tutorials/.?"
@@ -81,11 +82,23 @@ defmodule Dsxir.MixProject do
         Optimizer: [
           Dsxir.Optimizer,
           Dsxir.Optimizer.LabeledFewShot,
-          Dsxir.Optimizer.BootstrapFewShot
+          Dsxir.Optimizer.BootstrapFewShot,
+          Dsxir.Optimizer.KNNFewShot
+        ],
+        DemoStrategy: [
+          Dsxir.DemoStrategy,
+          Dsxir.DemoStrategy.KNN,
+          Dsxir.DemoStrategy.KNN.Entry,
+          Dsxir.DemoStrategy.KNN.EmbedText
         ],
         Evaluate: [Dsxir.Evaluate, Dsxir.EvaluationResult, Dsxir.Metric],
         Trace: [Dsxir.Trace],
-        Retrieval: [Dsxir.Retrieval, Dsxir.Retrieval.Embedder, Dsxir.Retrieval.InMemory],
+        Retrieval: [
+          Dsxir.Retrieval,
+          Dsxir.Retrieval.Embedder,
+          Dsxir.Retrieval.InMemory,
+          Dsxir.Retrieval.Cosine
+        ],
         Primitives: [
           Dsxir.Example,
           Dsxir.Prediction,

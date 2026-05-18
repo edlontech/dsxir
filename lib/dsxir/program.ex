@@ -9,10 +9,11 @@ defmodule Dsxir.Program do
 
   defmodule State do
     @moduledoc "Per-predictor mutable slot: demos, instruction override, signature override."
-    defstruct demos: [], instructions_override: nil, signature_override: nil
+    defstruct demos: [], demo_strategy: nil, instructions_override: nil, signature_override: nil
 
     @type t :: %__MODULE__{
             demos: [Dsxir.Demo.t() | Dsxir.Example.t()],
+            demo_strategy: nil | Dsxir.DemoStrategy.t(),
             instructions_override: nil | String.t(),
             signature_override: nil | module()
           }
@@ -24,6 +25,11 @@ defmodule Dsxir.Program do
         parts = [
           "demos: " <> Integer.to_string(length(state.demos))
         ]
+
+        parts =
+          if state.demo_strategy,
+            do: parts ++ ["demo_strategy: " <> inspect(state.demo_strategy.__struct__)],
+            else: parts
 
         parts =
           if state.instructions_override,
