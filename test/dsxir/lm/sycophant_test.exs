@@ -232,6 +232,63 @@ defmodule Dsxir.LM.SycophantTest do
     )
   end
 
+  describe "message normalization" do
+    test "generate_text/3 converts plain %{role:, content:} maps with string roles to Sycophant.Message" do
+      expect(Sycophant, :generate_text, fn _model, msgs, _opts ->
+        assert [%Sycophant.Message{role: :user, content: "hi"}] = msgs
+        {:ok, %Sycophant.Response{text: "ok", context: %Sycophant.Context{messages: []}}}
+      end)
+
+      assert {:ok, "ok", _usage} =
+               Impl.generate_text([model: "m"], [%{role: "user", content: "hi"}], [])
+    end
+
+    test "generate_text/3 passes through %Sycophant.Message{} unchanged" do
+      original = Sycophant.Message.user("hello")
+
+      expect(Sycophant, :generate_text, fn _model, msgs, _opts ->
+        assert msgs == [original]
+        {:ok, %Sycophant.Response{text: "ok", context: %Sycophant.Context{messages: []}}}
+      end)
+
+      Impl.generate_text([model: "m"], [original], [])
+    end
+
+    test "generate_text/3 normalizes atom roles" do
+      expect(Sycophant, :generate_text, fn _model, msgs, _opts ->
+        assert [
+                 %Sycophant.Message{role: :system, content: "be brief"},
+                 %Sycophant.Message{role: :user, content: "hi"}
+               ] = msgs
+
+        {:ok, %Sycophant.Response{text: "ok", context: %Sycophant.Context{messages: []}}}
+      end)
+
+      Impl.generate_text(
+        [model: "m"],
+        [%{role: :system, content: "be brief"}, %{role: :user, content: "hi"}],
+        []
+      )
+    end
+
+    test "generate_object/4 also normalizes plain maps" do
+      schema = Zoi.object(%{answer: Zoi.string()})
+
+      expect(Sycophant, :generate_object, fn _model, msgs, _schema, _opts ->
+        assert [%Sycophant.Message{role: :user, content: "hi"}] = msgs
+
+        {:ok,
+         %Sycophant.Response{
+           text: nil,
+           object: %{"answer" => "42"},
+           context: %Sycophant.Context{messages: []}
+         }}
+      end)
+
+      Impl.generate_object([model: "m"], [%{role: "user", content: "hi"}], schema, [])
+    end
+  end
+
   test ":cache and :_dsxir_nonce are stripped before forwarding to Sycophant" do
     expect(Sycophant, :generate_text, fn _model, _msgs, sycophant_opts ->
       refute Keyword.has_key?(sycophant_opts, :cache)

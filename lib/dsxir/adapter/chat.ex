@@ -21,12 +21,12 @@ defmodule Dsxir.Adapter.Chat do
   def lm_mode, do: :text
 
   @impl Dsxir.Adapter
-  def format(signature, inputs, demos, _opts) do
+  def format(signature, inputs, demos, opts) do
     start = System.monotonic_time()
     {history_messages, scalar_inputs, history_names} = split_history_inputs(signature, inputs)
 
     messages =
-      [Message.system(system_prompt(signature))]
+      [Message.system(system_prompt(signature, opts))]
       |> Enum.concat(history_messages)
       |> Enum.concat([Message.user(user_prompt(signature, scalar_inputs, history_names, demos))])
 
@@ -93,8 +93,13 @@ defmodule Dsxir.Adapter.Chat do
     end
   end
 
-  defp system_prompt(signature) do
-    instruction = Runtime.instruction(signature) || ""
+  defp system_prompt(signature, opts) do
+    instruction =
+      case Keyword.get(opts, :instruction_override) do
+        text when is_binary(text) and text != "" -> text
+        _ -> Runtime.instruction(signature) || ""
+      end
+
     inputs_doc = render_field_list("Inputs:", Runtime.inputs(signature))
     outputs_doc = render_field_list("Outputs:", Runtime.outputs(signature))
 

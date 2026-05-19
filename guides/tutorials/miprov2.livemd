@@ -1,0 +1,1057 @@
+<!-- livebook:{"persist_outputs":true} -->
+
+# Content Moderation with MIPROv2
+
+```elixir
+Mix.install(
+  [
+    {:dsxir, path: Path.expand("../..", __DIR__)},
+    {:kino, "~> 0.19"}
+  ]
+)
+```
+
+## Overview
+
+`Dsxir.Optimizer.MIPROv2` is a **joint instruction and demo optimizer**.
+Unlike `LabeledFewShot` (picks demos), `BootstrapFewShot` (bootstraps
+demos), or `KNNFewShot` (retrieves demos per call), MIPROv2 searches
+both the **instruction wording** and the **demo bundle** at the same
+time, treating each predictor as two categorical dimensions of a single
+search space.
+
+The optimizer:
+
+1. Summarizes the program and the dataset with the proposer LM.
+2. Asks the proposer for `num_instruction_candidates` grounded
+   instruction rewrites per predictor.
+3. Bootstraps `num_demo_sets` candidate demo bundles via
+   `LabeledFewShot` and `BootstrapFewShot`.
+4. Searches the joint categorical space with a configurable sampler
+   (`Dsxir.Optimizer.Search.TPE` by default), evaluating each trial on
+   a minibatch of the held-out valset.
+5. Periodically re-runs the top trials on the full valset and keeps
+   the winner.
+
+This tutorial demonstrates that flow on a small **content moderation**
+task: given a short user-generated snippet, the program must output a
+`severity` and the list of `policy_violations`. The instruction wording
+materially affects what the model flags (e.g. "be conservative" vs.
+"err on the side of caution about harassment"), and demos teach edge
+cases. That is exactly the shape MIPROv2 is built for.
+
+When run from a checkout of `dsxir`, `Mix.install/1` above resolves the
+library from the parent directory. If you launch this livebook from
+elsewhere, replace the `path:` line with `{:dsxir, "~> 0.1"}`.
+
+## Configuring the LM
+
+Architectural defaults live in `Dsxir.configure/1`. Credentials live in
+the per-request context, never on disk. We use a `Kino.Input.password`
+to keep the API key out of the notebook.
+
+```elixir
+Dsxir.configure(
+  lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-4o-mini"]},
+  adapter: Dsxir.Adapter.Chat
+)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
+```elixir
+api_key_input = Kino.Input.password("OPENAI_API_KEY")
+```
+
+```elixir
+lm_frame = fn ->
+  api_key = Kino.Input.read(api_key_input)
+
+  [
+    lm:
+      {Dsxir.LM.Sycophant,
+       [model: "openai:gpt-4o-mini", api_key: api_key, temperature: 0.2]}
+  ]
+end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+#Function<43.113135111/0 in :erl_eval.expr/6>
+```
+
+MIPROv2 needs both a **task LM** (the model under optimization) and a
+**proposer LM** (used to write instruction candidates and summarize the
+program and dataset). They default to the same model. For richer
+proposals, point `:proposer_lm` at a larger model and keep the task LM
+small. Here we use one model for both to keep the cost predictable.
+
+## Task signature and program
+
+A single predictor with a deliberately under-specified instruction.
+MIPROv2's job is to find a better one.
+
+```elixir
+defmodule MyApp.Moderation.Classify do
+  use Dsxir.Signature
+
+  @severities ~w(low medium high)
+  @categories ~w(harassment hate sexual violence self_harm spam other)
+
+  signature do
+    instruction "Classify the snippet for moderation."
+
+    input :snippet, :string
+
+    output :severity, Zoi.enum(@severities),
+      desc: "Overall severity of the snippet for moderation routing."
+
+    output :policy_violations, {:list, Zoi.enum(@categories)},
+      desc: "Zero or more policy categories the snippet violates."
+  end
+end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+{:module, MyApp.Moderation.Classify, <<70, 79, 82, 49, 0, 0, 135, ...>>, ...}
+```
+
+```elixir
+defmodule MyApp.Moderation.Program do
+  use Dsxir.Module
+
+  predictor :classify, Dsxir.Predictor.Predict,
+    signature: MyApp.Moderation.Classify
+
+  def forward(prog, %{snippet: snippet}) do
+    call(prog, :classify, %{snippet: snippet})
+  end
+end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+{:module, MyApp.Moderation.Program, <<70, 79, 82, 49, 0, 0, 83, ...>>, ...}
+```
+
+We use `Dsxir.Predictor.Predict` here so the lift from MIPROv2 is
+attributable to the optimizer, not to a reasoning prelude. In
+production swap to `ChainOfThought` once you trust the optimizer is
+helping.
+
+## Trainset and valset
+
+Thirty short snippets with severity and category labels. Hand-written
+to span the categories and three severity tiers, with a handful of
+borderline cases (banter that reads as harassment without context;
+political dissent that is not hate; medical descriptions that are not
+self-harm).
+
+```elixir
+trainset_data = [
+  %{snippet: "I love your new haircut, looks great!",
+    severity: "low", policy_violations: []},
+  %{snippet: "Thanks for the help with my homework yesterday.",
+    severity: "low", policy_violations: []},
+  %{snippet: "The weather has been awful this week.",
+    severity: "low", policy_violations: []},
+  %{snippet: "Just landed in Berlin, anyone want to grab coffee?",
+    severity: "low", policy_violations: []},
+  %{snippet: "I disagree with the policy but understand the reasoning.",
+    severity: "low", policy_violations: []},
+
+  %{snippet: "You're an idiot and nobody likes you here.",
+    severity: "medium", policy_violations: ["harassment"]},
+  %{snippet: "Shut up, loser, go cry to your mom.",
+    severity: "medium", policy_violations: ["harassment"]},
+  %{snippet: "Nobody on this team can stand working with you.",
+    severity: "medium", policy_violations: ["harassment"]},
+  %{snippet: "Stop posting, you embarrass yourself every time.",
+    severity: "medium", policy_violations: ["harassment"]},
+
+  %{snippet: "All [ethnic group] are criminals, they should be banned.",
+    severity: "high", policy_violations: ["hate"]},
+  %{snippet: "[Religious group] people are subhuman and dangerous.",
+    severity: "high", policy_violations: ["hate"]},
+  %{snippet: "Women don't belong in engineering, they ruin teams.",
+    severity: "high", policy_violations: ["hate", "harassment"]},
+
+  %{snippet: "Check out my cam, hot pics in DM, 18+ only.",
+    severity: "medium", policy_violations: ["sexual", "spam"]},
+  %{snippet: "Graphic description of explicit sexual act between adults.",
+    severity: "medium", policy_violations: ["sexual"]},
+
+  %{snippet: "I'm going to find where you live and hurt you.",
+    severity: "high", policy_violations: ["violence", "harassment"]},
+  %{snippet: "Someone should put a bullet in that politician.",
+    severity: "high", policy_violations: ["violence"]},
+  %{snippet: "I'll break every bone in your hands if you type that again.",
+    severity: "high", policy_violations: ["violence", "harassment"]},
+
+  %{snippet: "I want to end it all, nothing matters anymore.",
+    severity: "high", policy_violations: ["self_harm"]},
+  %{snippet: "Detailed instructions on how to cut myself without scars.",
+    severity: "high", policy_violations: ["self_harm"]},
+
+  %{snippet: "Make $5000/week from home, click here: bit.ly/xyz123",
+    severity: "low", policy_violations: ["spam"]},
+  %{snippet: "BUY NOW!!! Cheap watches replicas, DM for catalog.",
+    severity: "low", policy_violations: ["spam"]},
+  %{snippet: "Free crypto airdrop, connect wallet at evil-site.example",
+    severity: "medium", policy_violations: ["spam"]},
+
+  %{snippet: "Doctors recommend taking iron supplements during pregnancy.",
+    severity: "low", policy_violations: []},
+  %{snippet: "I survived a suicide attempt last year and got help, AMA.",
+    severity: "low", policy_violations: []},
+  %{snippet: "The film depicts wartime violence but is critically acclaimed.",
+    severity: "low", policy_violations: []},
+  %{snippet: "Sex education curricula vary widely across school districts.",
+    severity: "low", policy_violations: []},
+
+  %{snippet: "I think the mayor's housing plan is shortsighted and harmful.",
+    severity: "low", policy_violations: []},
+  %{snippet: "Bro, you absolutely destroyed me in that match, well played.",
+    severity: "low", policy_violations: []},
+  %{snippet: "She's been a nightmare client, but I won't name her here.",
+    severity: "low", policy_violations: []},
+  %{snippet: "If you ever speak to my sister again I will end you.",
+    severity: "high", policy_violations: ["violence", "harassment"]}
+]
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+[
+  %{snippet: "I love your new haircut, looks great!", severity: "low", policy_violations: []},
+  %{
+    snippet: "Thanks for the help with my homework yesterday.",
+    severity: "low",
+    policy_violations: []
+  },
+  %{snippet: "The weather has been awful this week.", severity: "low", policy_violations: []},
+  %{
+    snippet: "Just landed in Berlin, anyone want to grab coffee?",
+    severity: "low",
+    policy_violations: []
+  },
+  %{
+    snippet: "I disagree with the policy but understand the reasoning.",
+    severity: "low",
+    policy_violations: []
+  },
+  %{
+    snippet: "You're an idiot and nobody likes you here.",
+    severity: "medium",
+    policy_violations: ["harassment"]
+  },
+  %{
+    snippet: "Shut up, loser, go cry to your mom.",
+    severity: "medium",
+    policy_violations: ["harassment"]
+  },
+  %{
+    snippet: "Nobody on this team can stand working with you.",
+    severity: "medium",
+    policy_violations: ["harassment"]
+  },
+  %{
+    snippet: "Stop posting, you embarrass yourself every time.",
+    severity: "medium",
+    policy_violations: ["harassment"]
+  },
+  %{
+    snippet: "All [ethnic group] are criminals, they should be banned.",
+    severity: "high",
+    policy_violations: ["hate"]
+  },
+  %{
+    snippet: "[Religious group] people are subhuman and dangerous.",
+    severity: "high",
+    policy_violations: ["hate"]
+  },
+  %{
+    snippet: "Women don't belong in engineering, they ruin teams.",
+    severity: "high",
+    policy_violations: ["hate", "harassment"]
+  },
+  %{
+    snippet: "Check out my cam, hot pics in DM, 18+ only.",
+    severity: "medium",
+    policy_violations: ["sexual", "spam"]
+  },
+  %{
+    snippet: "Graphic description of explicit sexual act between adults.",
+    severity: "medium",
+    policy_violations: ["sexual"]
+  },
+  %{
+    snippet: "I'm going to find where you live and hurt you.",
+    severity: "high",
+    policy_violations: ["violence", "harassment"]
+  },
+  %{
+    snippet: "Someone should put a bullet in that politician.",
+    severity: "high",
+    policy_violations: ["violence"]
+  },
+  %{
+    snippet: "I'll break every bone in your hands if you type that again.",
+    severity: "high",
+    policy_violations: ["violence", "harassment"]
+  },
+  %{
+    snippet: "I want to end it all, nothing matters anymore.",
+    severity: "high",
+    policy_violations: ["self_harm"]
+  },
+  %{
+    snippet: "Detailed instructions on how to cut myself without scars.",
+    severity: "high",
+    policy_violations: ["self_harm"]
+  },
+  %{
+    snippet: "Make $5000/week from home, click here: bit.ly/xyz123",
+    severity: "low",
+    policy_violations: ["spam"]
+  },
+  %{...},
+  ...
+]
+```
+
+```elixir
+valset_data = [
+  %{snippet: "Have a wonderful weekend everyone!",
+    severity: "low", policy_violations: []},
+  %{snippet: "Your code review was thorough, appreciate it.",
+    severity: "low", policy_violations: []},
+  %{snippet: "Crawling back under your rock would do us all a favor.",
+    severity: "medium", policy_violations: ["harassment"]},
+  %{snippet: "You should be ashamed to call yourself an engineer.",
+    severity: "medium", policy_violations: ["harassment"]},
+  %{snippet: "[Nationality] people are parasites who steal our jobs.",
+    severity: "high", policy_violations: ["hate"]},
+  %{snippet: "Trans people don't deserve healthcare, change my mind.",
+    severity: "high", policy_violations: ["hate", "harassment"]},
+  %{snippet: "DM me for adult content, satisfaction guaranteed.",
+    severity: "medium", policy_violations: ["sexual", "spam"]},
+  %{snippet: "I will hunt you down and make sure you never walk again.",
+    severity: "high", policy_violations: ["violence", "harassment"]},
+  %{snippet: "Nobody would notice if I just stopped existing tomorrow.",
+    severity: "high", policy_violations: ["self_harm"]},
+  %{snippet: "FREE iPhone giveaway, click my link in bio now!!!",
+    severity: "low", policy_violations: ["spam"]},
+  %{snippet: "The clinical trial results on the new SSRI were promising.",
+    severity: "low", policy_violations: []},
+  %{snippet: "Civil disobedience has historically driven legal reform.",
+    severity: "low", policy_violations: []},
+  %{snippet: "That penalty call was robbery, the ref must be blind.",
+    severity: "low", policy_violations: []},
+  %{snippet: "I disagree with your take but thanks for sharing it.",
+    severity: "low", policy_violations: []},
+  %{snippet: "Touch my kid again and I'll make sure you regret it.",
+    severity: "high", policy_violations: ["violence", "harassment"]}
+]
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+[
+  %{snippet: "Have a wonderful weekend everyone!", severity: "low", policy_violations: []},
+  %{
+    snippet: "Your code review was thorough, appreciate it.",
+    severity: "low",
+    policy_violations: []
+  },
+  %{
+    snippet: "Crawling back under your rock would do us all a favor.",
+    severity: "medium",
+    policy_violations: ["harassment"]
+  },
+  %{
+    snippet: "You should be ashamed to call yourself an engineer.",
+    severity: "medium",
+    policy_violations: ["harassment"]
+  },
+  %{
+    snippet: "[Nationality] people are parasites who steal our jobs.",
+    severity: "high",
+    policy_violations: ["hate"]
+  },
+  %{
+    snippet: "Trans people don't deserve healthcare, change my mind.",
+    severity: "high",
+    policy_violations: ["hate", "harassment"]
+  },
+  %{
+    snippet: "DM me for adult content, satisfaction guaranteed.",
+    severity: "medium",
+    policy_violations: ["sexual", "spam"]
+  },
+  %{
+    snippet: "I will hunt you down and make sure you never walk again.",
+    severity: "high",
+    policy_violations: ["violence", "harassment"]
+  },
+  %{
+    snippet: "Nobody would notice if I just stopped existing tomorrow.",
+    severity: "high",
+    policy_violations: ["self_harm"]
+  },
+  %{
+    snippet: "FREE iPhone giveaway, click my link in bio now!!!",
+    severity: "low",
+    policy_violations: ["spam"]
+  },
+  %{
+    snippet: "The clinical trial results on the new SSRI were promising.",
+    severity: "low",
+    policy_violations: []
+  },
+  %{
+    snippet: "Civil disobedience has historically driven legal reform.",
+    severity: "low",
+    policy_violations: []
+  },
+  %{
+    snippet: "That penalty call was robbery, the ref must be blind.",
+    severity: "low",
+    policy_violations: []
+  },
+  %{
+    snippet: "I disagree with your take but thanks for sharing it.",
+    severity: "low",
+    policy_violations: []
+  },
+  %{
+    snippet: "Touch my kid again and I'll make sure you regret it.",
+    severity: "high",
+    policy_violations: ["violence", "harassment"]
+  }
+]
+```
+
+```elixir
+to_example = fn rows ->
+  Enum.map(rows, fn row ->
+    Dsxir.Example.new(row, input_keys: [:snippet])
+  end)
+end
+
+trainset = to_example.(trainset_data)
+valset = to_example.(valset_data)
+{length(trainset), length(valset)}
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+{30, 15}
+```
+
+MIPROv2 will further split `trainset` into a search-time train slice
+and an internal valset (see `:valset_fraction`, default `0.2`). The
+external `valset` above is what we use for the final apples-to-apples
+evaluation between baseline and optimized programs.
+
+## A metric
+
+The metric scores severity exact-match and category set Jaccard
+similarity, averaged. It returns a float in `[0.0, 1.0]`. Both signals
+matter: routing depends on severity, downstream reporting depends on
+the categories.
+
+```elixir
+defmodule MyApp.Moderation.Metric do
+  @spec score(Dsxir.Example.t(), Dsxir.Prediction.t(), nil | list()) :: float()
+  def score(%Dsxir.Example{data: data}, %Dsxir.Prediction{fields: f}, _trace) do
+    sev = if data.severity == f.severity, do: 1.0, else: 0.0
+
+    gold = MapSet.new(data.policy_violations)
+    pred = MapSet.new(f.policy_violations || [])
+
+    cat =
+      cond do
+        MapSet.size(gold) == 0 and MapSet.size(pred) == 0 -> 1.0
+        true ->
+          inter = MapSet.intersection(gold, pred) |> MapSet.size()
+          union = MapSet.union(gold, pred) |> MapSet.size()
+          if union == 0, do: 0.0, else: inter / union
+      end
+
+    (sev + cat) / 2.0
+  end
+end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+{:module, MyApp.Moderation.Metric, <<70, 79, 82, 49, 0, 0, 14, ...>>, ...}
+```
+
+## Baseline evaluation
+
+Run the zero-shot program against the valset to set a floor.
+
+```elixir
+ev = %Dsxir.Evaluate{
+  devset: valset,
+  metric: &MyApp.Moderation.Metric.score/3,
+  num_threads: 4,
+  max_errors: 2
+}
+
+Dsxir.context(lm_frame.(), fn ->
+  prog = Dsxir.Program.new(MyApp.Moderation.Program)
+  result = Dsxir.evaluate(ev, prog)
+
+  %{score: result.score, errors: result.errors}
+end)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{errors: %{count: 0, by_class: %{}}, score: 83.3}
+```
+
+A bare instruction plus no demos lands somewhere in the middle. Some
+severities are obvious (`"FREE iPhone giveaway!!!"` is spam), but the
+borderline cases (political dissent vs. hate; survival narrative vs.
+self-harm) reliably flip in the wrong direction. That gap is what
+MIPROv2 will try to close.
+
+## Bootstrapping demos with BootstrapFewShot
+
+Useful as a comparison point: how much of the lift is from demos
+alone? `BootstrapFewShot` keeps the instruction untouched and only
+adds demos that pass the metric.
+
+```elixir
+Dsxir.context(lm_frame.(), fn ->
+  prog = Dsxir.Program.new(MyApp.Moderation.Program)
+
+  {:ok, bfs_compiled, bfs_stats} =
+    Dsxir.compile(
+      Dsxir.Optimizer.BootstrapFewShot,
+      prog,
+      trainset,
+      &MyApp.Moderation.Metric.score/3,
+      max_labeled_demos: 2,
+      max_bootstrapped_demos: 4,
+      threshold: 0.7
+    )
+
+  result = Dsxir.evaluate(ev, bfs_compiled)
+
+  %{stats: bfs_stats, score: result.score}
+end)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{
+  stats: %{
+    threshold: 0.7,
+    error_count: 0,
+    max_errors: 10,
+    bootstrapped_demos: 4,
+    labeled_demos: 2,
+    predictor_count: 1,
+    rounds: 1
+  },
+  score: 93.3
+}
+```
+
+A modest lift. We now expect MIPROv2 to do at least as well, since its
+search space contains "current instruction + bootstrapped demos" as
+one of the candidate configs.
+
+## Optimizing with MIPROv2
+
+The headline call. `auto: :light` keeps the trial budget small for the
+walkthrough.
+
+```elixir
+Dsxir.Optimizer.MIPROv2.Auto.preset(:light)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{minibatch_size: 25, num_demo_sets: 2, num_instruction_candidates: 3, num_trials: 6}
+```
+
+```elixir
+Dsxir.Optimizer.MIPROv2.Auto.preset(:medium)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{minibatch_size: 25, num_demo_sets: 4, num_instruction_candidates: 5, num_trials: 18}
+```
+
+Six trials, three instruction candidates per predictor, two demo
+bundles per predictor. The search space for our single predictor has
+`(1 + 3) * (1 + 2) = 12` configs, of which six will be sampled.
+
+```elixir
+compile_path = Path.join(System.tmp_dir!(), "moderation_miprov2.v1.json")
+
+{compiled, stats} =
+  Dsxir.context(lm_frame.(), fn ->
+    prog = Dsxir.Program.new(MyApp.Moderation.Program)
+
+    {:ok, compiled, stats} =
+      Dsxir.compile(
+        Dsxir.Optimizer.MIPROv2,
+        prog,
+        trainset,
+        &MyApp.Moderation.Metric.score/3,
+        auto: :light,
+        seed: 42,
+        sampler: Dsxir.Optimizer.Search.TPE
+      )
+
+    Dsxir.save!(compiled, compile_path)
+    {compiled, stats}
+  end)
+
+stats
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+#Dsxir.Optimizer.MIPROv2.Stats<best_score: 1.0, trials: 6, full_evals: 0, proposer_calls: 3, task_lm: 24, cached: 12, ms: 32607, degraded: false>
+```
+
+The `Stats` struct has a custom `Inspect` implementation that prints
+the headline counters on one line. The richer fields (per-trial
+records, the proposer's program and dataset summaries) are still
+present on the struct.
+
+## Inspecting the Stats
+
+The score MIPROv2 reports is the metric mean on the minibatch (or the
+full valset, if any full evals ran). With `:light` the trial count is
+below the default `minibatch_full_eval_steps: 10`, so no full re-rank
+happens — `full_evals: 0` is expected.
+
+```elixir
+%{
+  best_score: stats.best_score,
+  best_config: stats.best_config,
+  trials: stats.trials,
+  proposer_calls: stats.proposer_calls,
+  total_task_lm_calls: stats.total_task_lm_calls,
+  total_cached_calls: stats.total_cached_calls,
+  wall_clock_ms: stats.wall_clock_ms,
+  degraded: stats.degraded
+}
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{
+  best_score: 1.0,
+  best_config: %{{:classify, :demos} => 2, {:classify, :instruction} => 3},
+  trials: [#Dsxir.Optimizer.MIPROv2.Stats.Record<trial: 0, score: 1.0, lm: 6, cached: 0, ms: 4090>,
+   #Dsxir.Optimizer.MIPROv2.Stats.Record<trial: 1, score: 1.0, lm: 6, cached: 0, ms: 3319>,
+   #Dsxir.Optimizer.MIPROv2.Stats.Record<trial: 2, score: 1.0, lm: 0, cached: 6, ms: 1>,
+   #Dsxir.Optimizer.MIPROv2.Stats.Record<trial: 3, score: 1.0, lm: 6, cached: 0, ms: 3278>,
+   #Dsxir.Optimizer.MIPROv2.Stats.Record<trial: 4, score: 1.0, lm: 6, cached: 0, ms: 5381>,
+   #Dsxir.Optimizer.MIPROv2.Stats.Record<trial: 5, score: 1.0, lm: 0, cached: 6, ms: 1>],
+  proposer_calls: 3,
+  total_task_lm_calls: 24,
+  total_cached_calls: 12,
+  wall_clock_ms: 32607,
+  degraded: false
+}
+```
+
+What each field tells you:
+
+* `:best_score` and `:best_config` — the winning trial's score and the
+  raw `{predictor, dim} => index` config.
+* `:trials` — every trial that ran, in chronological order. Each
+  `Record` carries score, LM calls, cached calls, and duration.
+* `:proposer_calls` — calls issued to the proposer LM. For one
+  predictor: one program summary, one dataset summary, one grounded
+  instruction proposal — three total.
+* `:total_task_lm_calls` — task LM calls summed across trials.
+  Roughly `num_trials * minibatch_size` plus bootstrap overhead.
+* `:total_cached_calls` — task LM calls that hit the compile cache
+  (zero on the first run; non-zero on re-runs of the same configs).
+* `:degraded` — `true` when any proposer call failed and was
+  substituted with empty summaries. Flag this loudly in CI; you do not
+  want to publish an artifact that silently dropped half its signal.
+* `:wall_clock_ms` — end-to-end compile time.
+
+The compiled program's per-predictor state holds the chosen
+instruction and demos:
+
+```elixir
+state = compiled.predictors[:classify]
+
+%{
+  instruction: state.instructions_override,
+  demo_count: length(state.demos)
+}
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{
+  instruction: "Review the text snippet to classify its severity as low, medium, or high and to detect any policy violations, including but not limited to harassment, hate speech, sexual content, violence, self-harm, spam, or other infractions.",
+  demo_count: 4
+}
+```
+
+The chosen instruction is one of the three proposer candidates, and
+the chosen demo bundle is one of the candidate bundles
+(`{:classify, :demos} => 2` here — index 0 is always the empty bundle,
+indices 1..N are the bootstrapped/labeled bundles).
+
+Compare the optimized program against the baseline and BootstrapFewShot
+on the same external valset:
+
+```elixir
+Dsxir.context(lm_frame.(), fn ->
+  loaded = Dsxir.load!(MyApp.Moderation.Program, compile_path)
+  result = Dsxir.evaluate(ev, loaded)
+  %{score: result.score}
+end)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{score: 86.1}
+```
+
+External-valset scores side by side on this run: baseline **83.3**,
+BootstrapFewShot **93.3**, MIPROv2 (`:light`) **86.1**. MIPROv2 beat
+the baseline but trailed BFS — and the trial records show why. Every
+one of the six minibatch trials scored `1.0` (see `:trials` above),
+meaning the metric saturated on the internal minibatch and the search
+had no signal to distinguish configs. With nothing to differentiate
+candidates, MIPROv2 effectively picked one by tie-break, and the
+picked config happens to generalize less well than the demo bundle
+BFS chose on the full trainset.
+
+This is the textbook scenario where MIPROv2's discriminating power
+needs more budget: bump to `:medium` or `:heavy` (more trials, more
+candidates, larger minibatch) so the metric distribution spreads out,
+or pick a harder metric where saturation is unlikely. We come back to
+this in the Random vs TPE section below.
+
+## The compile cache
+
+`compile_cache: true` is the default. The cache lives in a per-compile
+ETS table keyed on the resolved config and the example. It is **scoped
+to a single `Dsxir.compile/5` invocation** — each compile starts with
+an empty table and tears it down on exit (the table is anonymous and
+owner-process bound). Within a compile, the sampler often re-suggests
+the same `(instruction, demos)` config across trials; those duplicates
+hit the cache and account for the `total_cached_calls` you see above.
+
+```elixir
+Dsxir.context(lm_frame.(), fn ->
+  prog = Dsxir.Program.new(MyApp.Moderation.Program)
+
+  {:ok, _compiled, restats} =
+    Dsxir.compile(
+      Dsxir.Optimizer.MIPROv2,
+      prog,
+      trainset,
+      &MyApp.Moderation.Metric.score/3,
+      auto: :light,
+      seed: 42,
+      sampler: Dsxir.Optimizer.Search.TPE
+    )
+
+  %{
+    total_task_lm_calls: restats.total_task_lm_calls,
+    total_cached_calls: restats.total_cached_calls
+  }
+end)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{total_task_lm_calls: 24, total_cached_calls: 12}
+```
+
+The identical counts versus the first run are expected: each compile
+gets a fresh cache, so the 12 hits here are the same within-compile
+duplicates the first run saw. `total_task_lm_calls` is the work the
+trial loop saw; the cache absorbs the duplicates before they hit the
+wire. Set `compile_cache: false` if you specifically want to measure
+nondeterministic spread on the trial scores.
+
+## Random vs TPE sampler
+
+The sampler is pluggable. `Dsxir.Optimizer.Search.TPE` is the default;
+`Dsxir.Optimizer.Search.Random` is the baseline.
+
+```elixir
+Dsxir.context(lm_frame.(), fn ->
+  prog = Dsxir.Program.new(MyApp.Moderation.Program)
+
+  {:ok, _rand_compiled, rand_stats} =
+    Dsxir.compile(
+      Dsxir.Optimizer.MIPROv2,
+      prog,
+      trainset,
+      &MyApp.Moderation.Metric.score/3,
+      auto: :light,
+      seed: 42,
+      sampler: Dsxir.Optimizer.Search.Random
+    )
+
+  %{
+    best_score: rand_stats.best_score,
+    trial_scores: Enum.map(rand_stats.trials, & &1.score)
+  }
+end)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{best_score: 1.0, trial_scores: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]}
+```
+
+The catch with TPE on `:light` is that TPE's default
+`cold_start_trials` is **10**, but `:light` only runs **6** trials.
+That means the TPE sampler delegates every suggestion to the random
+sampler underneath — `:light` with TPE is effectively `:light` with
+random. To actually exercise TPE's exploitation, use `:medium` (18
+trials, 8 after cold-start) or `:heavy` (42 trials, 32 after
+cold-start). Alternatively, override the cold-start threshold:
+
+<!-- livebook:{"force_markdown":true} -->
+
+```elixir
+Dsxir.compile(
+  Dsxir.Optimizer.MIPROv2, prog, trainset, metric,
+  auto: :light,
+  sampler: Dsxir.Optimizer.Search.TPE,
+  sampler_opts: [cold_start_trials: 3]
+)
+```
+
+For a serious sampler comparison, run both at `:medium` or `:heavy`
+across several seeds and compare the *distribution* of best scores;
+single-seed numbers are noisy.
+
+## Telemetry
+
+MIPROv2 emits the generic optimizer events plus two of its own. Attach
+a handler before the compile to watch.
+
+```elixir
+ref =
+  :telemetry_test.attach_event_handlers(self(), [
+    [:dsxir, :optimizer, :start],
+    [:dsxir, :optimizer, :stop],
+    [:dsxir, :optimizer, :trial],
+    [:dsxir, :miprov2, :proposer],
+    [:dsxir, :miprov2, :rerank]
+  ])
+
+:ok
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
+Run a tiny compile and flush the inbox:
+
+```elixir
+Dsxir.context(lm_frame.(), fn ->
+  prog = Dsxir.Program.new(MyApp.Moderation.Program)
+
+  {:ok, _c, _s} =
+    Dsxir.compile(
+      Dsxir.Optimizer.MIPROv2,
+      prog,
+      trainset,
+      &MyApp.Moderation.Metric.score/3,
+      auto: :light,
+      seed: 7
+    )
+end)
+
+flush_events = fn ->
+  flusher = fn flusher ->
+    receive do
+      {event, _ref, meas, meta} ->
+        [%{event: event, meas: meas, meta: Map.take(meta, [:stage, :outcome, :predictor])}
+         | flusher.(flusher)]
+    after
+      0 -> []
+    end
+  end
+
+  flusher.(flusher)
+end
+
+flush_events.() |> Enum.take(8)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+[
+  %{meta: %{}, event: [:dsxir, :optimizer, :start], meas: %{system_time: 1779184083724207326}},
+  %{meta: %{}, event: [:dsxir, :optimizer, :start], meas: %{system_time: 1779184083724320618}},
+  %{meta: %{}, event: [:dsxir, :optimizer, :trial], meas: %{score: 0.5}},
+  %{meta: %{}, event: [:dsxir, :optimizer, :trial], meas: %{score: 0.0}},
+  %{meta: %{}, event: [:dsxir, :optimizer, :trial], meas: %{score: 1.0}},
+  %{meta: %{}, event: [:dsxir, :optimizer, :trial], meas: %{score: 1.0}},
+  %{meta: %{}, event: [:dsxir, :optimizer, :stop], meas: %{duration: 7021740733, score: nil}},
+  %{
+    meta: %{outcome: :ok, stage: :program_summary},
+    event: [:dsxir, :miprov2, :proposer],
+    meas: %{system_time: 1779184093209323425}
+  }
+]
+```
+
+Two `[:dsxir, :optimizer, :start]` events fire per compile: one from
+MIPROv2's outer wrap, and one from `BootstrapFewShot` running inside
+the bootstrap-demos step. The matching `:stop` with `score: nil`
+belongs to the BFS sub-compile; MIPROv2's own `:stop` carries a real
+`score` and follows the trial events. Filter on the `:optimizer`
+metadata key if you want to attribute events to a specific layer.
+
+In production, attach a real `:telemetry.attach/4` handler that
+forwards to your observability pipeline. A few useful patterns:
+
+* Count `[:dsxir, :miprov2, :proposer]` events with `outcome: :error`
+  to alert on proposer-LM failures; pair with `stats.degraded` in your
+  CI assertions.
+* Sum `meas.duration_ms` from `[:dsxir, :optimizer, :stop]` to budget
+  compile time.
+* Track `meas.score` from `[:dsxir, :optimizer, :trial]` to graph
+  per-trial progress and verify TPE is actually improving over the
+  cold-start floor.
+* `[:dsxir, :miprov2, :rerank]` fires every
+  `minibatch_full_eval_steps` trials with `meas: %{at_trial:
+  count, top_k_size: k}`. Absent events at `:light` because no rerank
+  is triggered with only six trials.
+
+## When to use MIPROv2
+
+MIPROv2 shines when **the instruction wording is part of the lift**.
+For tasks where any sensible instruction works and the only question
+is "which demos help most" (heterogeneous trainsets, retrieval-driven
+selection), `KNNFewShot` is the cheaper and more elegant tool. For
+tasks where a static set of demos is enough and you do not want a
+search loop, `BootstrapFewShot` is fine.
+
+Reach for MIPROv2 when:
+
+* The task has **ambiguous category boundaries** (moderation, intent
+  classification with overlapping intents, severity rubrics) where a
+  more explicit instruction noticeably shifts the model's calls.
+* You have **enough trainset** to support both a search trainset and
+  an internal valset (rule of thumb: 30+ examples).
+* You can spend the **compile budget** — proposer LM for summaries
+  and candidates plus `num_trials * minibatch_size` task LM calls.
+  `:light` is suitable for a smoke run; `:medium` or `:heavy` for a
+  production compile.
+* You can **measure the lift** with a clean external valset, separate
+  from the trainset MIPROv2 sees. The optimizer's own `best_score` is
+  reported on its internal minibatch and is informative but optimistic
+  relative to your downstream evaluation.
+
+Two practical caveats:
+
+1. Costs scale with `num_predictors`. Each predictor contributes two
+   dimensions and a proposer call. Big programs need bigger trial
+   budgets.
+2. Re-runs with the same `seed` and inputs are cheap thanks to the
+   compile cache. Re-runs across code changes that touch the program
+   structure or signatures invalidate the cache; budget accordingly.
+
+## Multi-tenant deployment
+
+A MIPROv2-compiled program deploys with the same `Dsxir.context/2`
+pattern as any other compiled artifact. The chosen instruction and
+demos are baked into the saved JSON; per-tenant context only carries
+credentials and metadata.
+
+<!-- livebook:{"force_markdown":true} -->
+
+```elixir
+def call(conn, _opts) do
+  tenant = conn.assigns.tenant
+
+  Dsxir.context(
+    [
+      lm: {Dsxir.LM.Sycophant,
+           [model: tenant.model_id, api_key: tenant.api_key]},
+      metadata: %{tenant_id: tenant.id, request_id: conn.assigns.request_id}
+    ],
+    fn ->
+      program =
+        Dsxir.load!(MyApp.Moderation.Program,
+                    "tenants/#{tenant.id}/moderation.json")
+
+      {_program, pred} =
+        MyApp.Moderation.Program.forward(program, %{
+          snippet: conn.params["snippet"]
+        })
+
+      json(conn, pred.fields)
+    end
+  )
+end
+```
+
+`Dsxir.load!/2` validates the artifact's signatures match the target
+module, so a signature drift fails loudly with
+`Dsxir.Errors.Invalid.SignatureMismatch` rather than silently producing
+wrong demos.
+
+## Where to go next
+
+* **Try a richer proposer.** Pass `proposer_lm: {Dsxir.LM.Sycophant,
+  [model: "openai:gpt-4o", api_key: key]}` to ground instruction
+  proposals with a stronger model while keeping the task LM cheap.
+* **Tune `:valset_fraction`.** Default `0.2`. On a 30-example
+  trainset that is 6 examples in the internal valset. Bump to `0.3`
+  when the search is noisy and trials of identical configs disagree.
+* **Use `:tip`** to nudge the proposer's stylistic register
+  ("concise", "include negative examples in the instruction").
+* **Subscribe `[:dsxir, :predictor, :stop]`** alongside the optimizer
+  events to attribute compile-time token spend per predictor; the
+  metadata you set in the surrounding `Dsxir.context/2` flows through.
+* **Re-compile on data drift.** When you add edge cases to the
+  trainset, re-run MIPROv2 with the same seed. The compile cache
+  absorbs duplicate trials and the proposer regenerates instructions
+  that account for the new data shape.

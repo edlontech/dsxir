@@ -69,6 +69,27 @@ defmodule Dsxir.Adapter.JsonTest do
       refute user.content =~ "null"
     end
 
+    test "instruction_override replaces the signature instruction in the system prompt" do
+      [system, _user] =
+        Json.format(AnswerQuestion, %{question: "x"}, [],
+          instruction_override: "Custom override instruction."
+        )
+
+      assert system.content =~ "Custom override instruction."
+      refute system.content =~ "Answer the user's question"
+    end
+
+    test "instruction_override falls back to signature instruction when nil or empty" do
+      [system_nil, _] =
+        Json.format(AnswerQuestion, %{question: "x"}, [], instruction_override: nil)
+
+      [system_empty, _] =
+        Json.format(AnswerQuestion, %{question: "x"}, [], instruction_override: "")
+
+      assert system_nil.content =~ "Answer the user's question"
+      assert system_empty.content =~ "Answer the user's question"
+    end
+
     test "raises Invalid.Configuration when :stream is in opts" do
       err =
         assert_raise Dsxir.Errors.Invalid.Configuration, fn ->

@@ -131,16 +131,19 @@ defmodule Dsxir.Predictor.Predict do
   end
 
   defp run_adapter(state, signature, inputs, adapter, opts) do
+    opts2 = Keyword.put(opts, :instruction_override, state.instructions_override)
+
     case adapter_lm_mode(adapter) do
-      :object -> adapter.format_and_call(signature, inputs, state.demos, opts)
-      _ -> run_text_adapter(state, signature, inputs, adapter, opts)
+      :object -> adapter.format_and_call(signature, inputs, state.demos, opts2)
+      _ -> run_text_adapter(state, signature, inputs, adapter, opts2)
     end
   end
 
   defp run_text_adapter(state, signature, inputs, adapter, opts) do
     messages = adapter.format(signature, inputs, state.demos, opts)
+    lm_opts = Keyword.delete(opts, :instruction_override)
 
-    case Dsxir.LM.generate_text(messages, opts) do
+    case Dsxir.LM.generate_text(messages, lm_opts) do
       {:ok, payload, usage} -> parse_text_response(adapter, signature, payload, usage, opts)
       {:error, %Dsxir.Errors.LM.ContextWindow{} = err} -> {:fallback, err}
       {:error, err} -> raise err

@@ -91,6 +91,31 @@ Dsxir.save!(compiled, "qa.v1.json")
 `Dsxir.Optimizer.BootstrapFewShot` (trace-driven, with diversity) are
 the two v0 optimizers.
 
+### MIPROv2
+
+`Dsxir.Optimizer.MIPROv2` jointly searches over candidate instructions
+and demo bundles. It bootstraps demo candidates, asks a proposer LM for
+candidate instructions grounded in program and dataset summaries, then
+runs a sampler-driven search (TPE by default) with periodic full-valset
+reranks of the top trials.
+
+```elixir
+{:ok, compiled, stats} =
+  Dsxir.compile(
+    Dsxir.Optimizer.MIPROv2,
+    program,
+    trainset,
+    &MyApp.Metric.f1/3,
+    auto: :medium
+  )
+
+stats.best_score
+```
+
+`auto:` accepts `:light | :medium | :heavy` (see `Dsxir.Optimizer.MIPROv2.Auto`).
+Notable overrides: `:proposer_lm`, `:sampler`, `:batch_size`, `:seed`,
+`:minibatch_full_eval_steps`, `:top_k_full_eval`.
+
 ## Multi-tenant
 
 Tenant data flows through `Dsxir.context/2`, never through

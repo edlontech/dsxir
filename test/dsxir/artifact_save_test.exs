@@ -109,6 +109,42 @@ defmodule Dsxir.ArtifactSaveTest do
     assert_raise Protocol.UndefinedError, fn -> Artifact.save!(bad, path) end
   end
 
+  test "encodes _miprov2_stats additively under _metadata" do
+    stats = %Dsxir.Optimizer.MIPROv2.Stats{
+      best_score: 0.75,
+      best_config: %{{:answer, :instruction} => 1},
+      proposer_calls: 2,
+      total_task_lm_calls: 10,
+      total_cached_calls: 3,
+      degraded: false
+    }
+
+    prog = %Program{
+      module: Prog,
+      metadata: %{
+        compiled_with: Dsxir.Optimizer.MIPROv2,
+        score: 0.75,
+        trainset_hash: "deadbeef",
+        _miprov2_stats: stats
+      }
+    }
+
+    encoded = Artifact.encode(prog)
+    md = encoded["_metadata"]
+
+    assert md["compiled_with"] == "Elixir.Dsxir.Optimizer.MIPROv2"
+    assert md["score"] == 0.75
+    assert md["trainset_hash"] == "deadbeef"
+    assert is_map(md["_miprov2_stats"])
+    assert md["_miprov2_stats"]["best_score"] == 0.75
+    assert md["_miprov2_stats"]["proposer_calls"] == 2
+
+    json = Jason.encode!(encoded)
+    decoded = Jason.decode!(json)
+    {:ok, hydrated} = Artifact.decode(Prog, decoded)
+    assert hydrated.metadata[:_miprov2_stats]["best_score"] == 0.75
+  end
+
   test "encode_demo accepts raw map demos without crashing" do
     prog = %Program{
       module: Prog,

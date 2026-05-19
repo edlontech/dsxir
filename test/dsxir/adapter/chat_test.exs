@@ -65,6 +65,30 @@ defmodule Dsxir.Adapter.ChatTest do
       assert user.content =~ "Paris"
       refute user.content =~ "null"
     end
+
+    test "instruction_override replaces the signature instruction in the system prompt" do
+      [system, _user] =
+        Chat.format(AnswerQuestion, %{question: "What is Elixir?"}, [],
+          instruction_override: "Custom override instruction."
+        )
+
+      assert system.content =~ "Custom override instruction."
+      refute system.content =~ "Answer the user's question"
+    end
+
+    test "instruction_override falls back to signature instruction when nil" do
+      [system, _user] =
+        Chat.format(AnswerQuestion, %{question: "x"}, [], instruction_override: nil)
+
+      assert system.content =~ "Answer the user's question"
+    end
+
+    test "instruction_override falls back to signature instruction when empty string" do
+      [system, _user] =
+        Chat.format(AnswerQuestion, %{question: "x"}, [], instruction_override: "")
+
+      assert system.content =~ "Answer the user's question"
+    end
   end
 
   describe "parse/3" do

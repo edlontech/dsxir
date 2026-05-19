@@ -22,6 +22,9 @@ defmodule Dsxir.Telemetry do
       [:dsxir, :optimizer, :trial]
       [:dsxir, :optimizer, :item_error]
 
+      [:dsxir, :miprov2, :proposer]
+      [:dsxir, :miprov2, :rerank]
+
       [:dsxir, :evaluate, :item]
       [:dsxir, :evaluate, :stop]
 
@@ -84,6 +87,9 @@ defmodule Dsxir.Telemetry do
   @optimizer_trial [:dsxir, :optimizer, :trial]
   @optimizer_item_error [:dsxir, :optimizer, :item_error]
 
+  @miprov2_proposer [:dsxir, :miprov2, :proposer]
+  @miprov2_rerank [:dsxir, :miprov2, :rerank]
+
   @evaluate_item [:dsxir, :evaluate, :item]
   @evaluate_stop [:dsxir, :evaluate, :stop]
 
@@ -128,6 +134,14 @@ defmodule Dsxir.Telemetry do
   @doc "Event name for `[:dsxir, :optimizer, :item_error]`."
   @spec optimizer_item_error() :: event()
   def optimizer_item_error, do: @optimizer_item_error
+
+  @doc "Event name for `[:dsxir, :miprov2, :proposer]` (point-in-time proposer outcome)."
+  @spec miprov2_proposer() :: event()
+  def miprov2_proposer, do: @miprov2_proposer
+
+  @doc "Event name for `[:dsxir, :miprov2, :rerank]` (point-in-time full-eval rerank)."
+  @spec miprov2_rerank() :: event()
+  def miprov2_rerank, do: @miprov2_rerank
 
   @doc "Event name for `[:dsxir, :evaluate, :item]`."
   @spec evaluate_item() :: event()

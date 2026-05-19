@@ -75,8 +75,9 @@ defmodule Dsxir.LM.Sycophant do
   def generate_text(config, messages, opts) do
     model = Keyword.fetch!(config, :model)
     sycophant_opts = build_sycophant_opts(config, opts)
+    normalized = normalize_messages(messages)
 
-    case Sycophant.generate_text(model, messages, sycophant_opts) do
+    case Sycophant.generate_text(model, normalized, sycophant_opts) do
       {:ok, %Sycophant.Response{text: text, usage: usage}} when is_binary(text) ->
         {:ok, text, extract_usage(usage)}
 
@@ -97,8 +98,9 @@ defmodule Dsxir.LM.Sycophant do
   def generate_object(config, messages, schema, opts) do
     model = Keyword.fetch!(config, :model)
     sycophant_opts = build_sycophant_opts(config, opts)
+    normalized = normalize_messages(messages)
 
-    case Sycophant.generate_object(model, messages, schema, sycophant_opts) do
+    case Sycophant.generate_object(model, normalized, schema, sycophant_opts) do
       {:ok, %Sycophant.Response{object: object, usage: usage}} when is_map(object) ->
         {:ok, object, extract_usage(usage)}
 
@@ -158,6 +160,27 @@ defmodule Dsxir.LM.Sycophant do
     |> Keyword.drop(@credential_opts ++ @dsxir_internal_opts ++ [:embedding_model])
     |> maybe_put_credentials(merged)
   end
+
+  defp normalize_messages(messages) when is_list(messages) do
+    Enum.map(messages, &normalize_message/1)
+  end
+
+  defp normalize_message(%Sycophant.Message{} = msg), do: msg
+
+  defp normalize_message(%{role: role, content: content} = msg) do
+    %Sycophant.Message{
+      role: normalize_role(role),
+      content: content,
+      tool_call_id: Map.get(msg, :tool_call_id),
+      tool_calls: Map.get(msg, :tool_calls)
+    }
+  end
+
+  defp normalize_role(role) when is_atom(role), do: role
+  defp normalize_role("user"), do: :user
+  defp normalize_role("system"), do: :system
+  defp normalize_role("assistant"), do: :assistant
+  defp normalize_role("tool_result"), do: :tool_result
 
   defp extract_usage(nil), do: Dsxir.LM.empty_usage()
 

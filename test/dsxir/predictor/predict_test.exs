@@ -14,6 +14,31 @@ defmodule Dsxir.Predictor.PredictTest do
     :ok
   end
 
+  test "forward/4 threads state.instructions_override into the chat adapter system prompt" do
+    parent = self()
+
+    expect(Dsxir.LM.Sycophant, :generate_text, fn _config, msgs, opts ->
+      send(parent, {:captured_messages, msgs})
+      send(parent, {:captured_lm_opts, opts})
+      {:ok, "[[ ## answer ## ]]\nok", Dsxir.LM.empty_usage()}
+    end)
+
+    Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
+      state = %Dsxir.Program.State{instructions_override: "MIPRO-PICKED instruction"}
+
+      {^state, _prediction} =
+        Predict.forward(state, AnswerQuestion, %{question: "What is Elixir?"}, [])
+    end)
+
+    assert_receive {:captured_messages, [system | _]}
+    assert system.role == :system
+    assert system.content =~ "MIPRO-PICKED instruction"
+    refute system.content =~ "Answer the user's question"
+
+    assert_receive {:captured_lm_opts, lm_opts}
+    refute Keyword.has_key?(lm_opts, :instruction_override)
+  end
+
   test "forward/4 returns a %Prediction{} from a stubbed LM" do
     markered = """
     [[ ## answer ## ]]

@@ -153,7 +153,50 @@ defmodule Dsxir.Artifact do
   end
 
   defp encode_metadata_value(:compiled_with, mod), do: stringify_module(mod)
-  defp encode_metadata_value(_key, value), do: value
+  defp encode_metadata_value(:_miprov2_stats, value), do: encode_miprov2_stats(value)
+  defp encode_metadata_value(_key, value), do: encode_jsonable(value)
+
+  # Encodes a `%Dsxir.Optimizer.MIPROv2.Stats{}` (or any compatible map) into a
+  # plain string-keyed map. Asymmetric round-trip: `hydrate_metadata_value/2`
+  # leaves `"_miprov2_stats"` as a string-keyed map rather than rehydrating it
+  # back into the original struct — mirrors how `compiled_with` degrades to nil
+  # when the optimizer module is not loaded at hydrate time.
+  defp encode_miprov2_stats(nil), do: nil
+
+  defp encode_miprov2_stats(%{__struct__: _} = stats) do
+    stats
+    |> Map.from_struct()
+    |> Map.delete(:__struct__)
+    |> Map.new(fn {k, v} -> {Atom.to_string(k), encode_jsonable(v)} end)
+  end
+
+  defp encode_miprov2_stats(other), do: encode_jsonable(other)
+
+  defp encode_jsonable(%{__struct__: _} = struct) do
+    struct
+    |> Map.from_struct()
+    |> Map.delete(:__struct__)
+    |> Map.new(fn {k, v} -> {Atom.to_string(k), encode_jsonable(v)} end)
+  end
+
+  defp encode_jsonable(map) when is_map(map) do
+    Map.new(map, fn {k, v} -> {encode_map_key(k), encode_jsonable(v)} end)
+  end
+
+  defp encode_jsonable(list) when is_list(list), do: Enum.map(list, &encode_jsonable/1)
+
+  defp encode_jsonable(tuple) when is_tuple(tuple),
+    do: tuple |> Tuple.to_list() |> Enum.map(&encode_jsonable/1)
+
+  defp encode_jsonable(atom) when is_atom(atom) and not is_boolean(atom) and not is_nil(atom),
+    do: Atom.to_string(atom)
+
+  defp encode_jsonable(value), do: value
+
+  defp encode_map_key(key) when is_binary(key), do: key
+  defp encode_map_key(key) when is_atom(key), do: Atom.to_string(key)
+  defp encode_map_key(key) when is_tuple(key), do: inspect(key)
+  defp encode_map_key(key), do: to_string(key)
 
   defp stringify_module(nil), do: nil
   defp stringify_module(mod) when is_atom(mod), do: Atom.to_string(mod)
@@ -373,6 +416,9 @@ defmodule Dsxir.Artifact do
   end
 
   defp hydrate_metadata_value("compiled_with", value), do: optimizer_module(value)
+  # `_miprov2_stats` falls through this clause: the encoded string-keyed map is
+  # returned as-is and is **not** rehydrated into a `%Dsxir.Optimizer.MIPROv2.Stats{}`.
+  # This asymmetry is intentional — see `encode_miprov2_stats/1` above.
   defp hydrate_metadata_value(_key, value), do: value
 
   defp optimizer_module(nil), do: nil

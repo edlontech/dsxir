@@ -49,7 +49,8 @@ defmodule Dsxir.MixProject do
       extras: [
         "README.md",
         "guides/tutorials/email_extraction.livemd",
-        "guides/tutorials/knn_few_shot.livemd"
+        "guides/tutorials/knn_few_shot.livemd",
+        "guides/tutorials/miprov2.livemd"
       ],
       groups_for_extras: [
         Tutorials: ~r"guides/tutorials/.?"
@@ -81,9 +82,15 @@ defmodule Dsxir.MixProject do
         ],
         Optimizer: [
           Dsxir.Optimizer,
+          Dsxir.Optimizer.Cache,
           Dsxir.Optimizer.LabeledFewShot,
           Dsxir.Optimizer.BootstrapFewShot,
-          Dsxir.Optimizer.KNNFewShot
+          Dsxir.Optimizer.KNNFewShot,
+          Dsxir.Optimizer.MIPROv2,
+          Dsxir.Optimizer.MIPROv2.Stats,
+          Dsxir.Optimizer.Search.Sampler,
+          Dsxir.Optimizer.Search.Random,
+          Dsxir.Optimizer.Search.TPE
         ],
         DemoStrategy: [
           Dsxir.DemoStrategy,

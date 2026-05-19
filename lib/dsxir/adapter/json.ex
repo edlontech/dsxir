@@ -58,7 +58,7 @@ defmodule Dsxir.Adapter.Json do
     start = System.monotonic_time()
 
     messages = [
-      Message.system(system_prompt(signature)),
+      Message.system(system_prompt(signature, opts)),
       Message.user(user_prompt(signature, inputs, demos))
     ]
 
@@ -152,7 +152,9 @@ defmodule Dsxir.Adapter.Json do
   end
 
   defp do_call_and_parse(signature, messages, schema, opts) do
-    case Dsxir.LM.generate_object(messages, schema, opts) do
+    lm_opts = Keyword.delete(opts, :instruction_override)
+
+    case Dsxir.LM.generate_object(messages, schema, lm_opts) do
       {:ok, payload, usage} ->
         case parse(signature, payload, opts) do
           {:ok, fields} -> {:ok, fields, usage, payload}
@@ -189,8 +191,13 @@ defmodule Dsxir.Adapter.Json do
     )
   end
 
-  defp system_prompt(signature) do
-    instruction = Runtime.instruction(signature) || ""
+  defp system_prompt(signature, opts) do
+    instruction =
+      case Keyword.get(opts, :instruction_override) do
+        text when is_binary(text) and text != "" -> text
+        _ -> Runtime.instruction(signature) || ""
+      end
+
     inputs_doc = render_field_list("Inputs:", Runtime.inputs(signature))
     outputs_doc = render_field_list("Outputs:", Runtime.outputs(signature))
 
