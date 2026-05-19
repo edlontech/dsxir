@@ -85,12 +85,19 @@ defmodule Dsxir.MixProject do
           Dsxir.Optimizer.Cache,
           Dsxir.Optimizer.LabeledFewShot,
           Dsxir.Optimizer.BootstrapFewShot,
+          Dsxir.Optimizer.BootstrapFewShot.Sampler,
           Dsxir.Optimizer.KNNFewShot,
           Dsxir.Optimizer.MIPROv2,
+          Dsxir.Optimizer.MIPROv2.Sampler,
           Dsxir.Optimizer.MIPROv2.Stats,
           Dsxir.Optimizer.Search.Sampler,
           Dsxir.Optimizer.Search.Random,
-          Dsxir.Optimizer.Search.TPE
+          Dsxir.Optimizer.Search.TPE,
+          Dsxir.OptimizerSession,
+          Dsxir.OptimizerSession.Checkpoint,
+          Dsxir.OptimizerSession.Store,
+          Dsxir.OptimizerSession.Store.ETS,
+          Dsxir.OptimizerSession.Store.File
         ],
         DemoStrategy: [
           Dsxir.DemoStrategy,

@@ -71,6 +71,14 @@ defmodule Dsxir.Optimizer.BootstrapFewShot do
 
   `metadata.trainset_hash` is
   `:crypto.hash(:sha256, :erlang.term_to_binary(trainset)) |> Base.encode16(case: :lower)`.
+
+  ## Session mode
+
+  `Dsxir.OptimizerSession.compile(BootstrapFewShot, ...)` walks the trainset one
+  example at a time via `step/6`, halting with `:rounds_exhausted` after all
+  `max_rounds` passes complete. Session mode preserves the per-round, per-example
+  scheduling but does not bail out early when the pool fills; the trial budget
+  matches `max_rounds * length(trainset)`.
   """
 
   @behaviour Dsxir.Optimizer
@@ -79,6 +87,7 @@ defmodule Dsxir.Optimizer.BootstrapFewShot do
   alias Dsxir.Errors
   alias Dsxir.Metric
   alias Dsxir.Module.Info, as: ModuleInfo
+  alias Dsxir.Optimizer.BootstrapFewShot.Sampler
   alias Dsxir.Program
   alias Dsxir.Settings
   alias Dsxir.Signature.Runtime, as: SignatureRuntime
@@ -399,5 +408,256 @@ defmodule Dsxir.Optimizer.BootstrapFewShot do
         error_class: Errors.class_of(err)
       }
     )
+  end
+
+  @impl Dsxir.Optimizer
+  @doc """
+  Prepare a resumable BootstrapFewShot session.
+
+  Performs phase one (labeled demo selection) eagerly and seeds the per-round
+  example queue used by `step/6`. The returned planned-trial count is
+  `max_rounds * length(trainset)` — an upper bound, since errors do not reduce
+  the budget but do increment the session's error counter.
+  """
+  @spec init_session(Program.t(), [Dsxir.Example.t()], nil | Dsxir.Metric.t(), keyword()) ::
+          {:ok, Sampler.t(), pos_integer()} | {:error, Exception.t()}
+  def init_session(_program, [], _metric, _opts) do
+    {:error, %Errors.Invalid.Trainset{reason: :empty, example: nil}}
+  end
+
+  def init_session(%Program{} = student, trainset, metric, opts)
+      when is_list(trainset) and is_list(opts) and (is_function(metric, 3) or is_nil(metric)) do
+    case validate_trainset(trainset) do
+      :ok ->
+        cfg = config(opts)
+        labeled = phase_one(trainset, cfg)
+        examples = prepare_examples(trainset, cfg)
+        planned = cfg.max_rounds * length(trainset)
+
+        sampler = %Sampler{
+          round: 1,
+          max_rounds: cfg.max_rounds,
+          examples_remaining_in_round: examples,
+          all_examples_for_round: examples,
+          demos_pool: empty_pool(student),
+          predictor_decls: ModuleInfo.module(student.module),
+          labeled_demos_slotted: labeled,
+          rng_seed: :erlang.phash2({:bootstrap_few_shot, opts}),
+          config: cfg,
+          error_count: 0
+        }
+
+        {:ok, sampler, planned}
+
+      {:error, %Errors.Invalid.Trainset{} = err} ->
+        {:error, err}
+    end
+  end
+
+  @impl Dsxir.Optimizer
+  @doc """
+  Run a single example through one round of BootstrapFewShot.
+
+  When the current round's queue is empty and `round < max_rounds`, advances
+  to the next round and recurses on the freshly prepared queue. When the queue
+  is empty and `round >= max_rounds`, halts with `:rounds_exhausted`.
+
+  Exceptions from the example pipeline are caught and reported as
+  `status: :error` trials rather than crashing the session.
+  """
+  @spec step(
+          Sampler.t(),
+          non_neg_integer(),
+          Program.t(),
+          [Dsxir.Example.t()],
+          nil | Dsxir.Metric.t(),
+          keyword()
+        ) :: {:cont, Sampler.t(), map()} | {:halt, Sampler.t(), :rounds_exhausted}
+  def step(
+        %Sampler{examples_remaining_in_round: [], round: r, max_rounds: max} = sampler,
+        _idx,
+        _program,
+        _trainset,
+        _metric,
+        _opts
+      )
+      when r >= max do
+    {:halt, sampler, :rounds_exhausted}
+  end
+
+  def step(
+        %Sampler{examples_remaining_in_round: [], round: r, max_rounds: max} = sampler,
+        idx,
+        program,
+        trainset,
+        metric,
+        opts
+      )
+      when r < max do
+    next_examples = prepare_examples(trainset, sampler.config)
+
+    sampler = %{
+      sampler
+      | round: r + 1,
+        examples_remaining_in_round: next_examples,
+        all_examples_for_round: next_examples
+    }
+
+    step(sampler, idx, program, trainset, metric, opts)
+  end
+
+  def step(
+        %Sampler{examples_remaining_in_round: [{example, ex_idx} | rest]} = sampler,
+        trial_idx,
+        program,
+        _trainset,
+        metric,
+        _opts
+      ) do
+    start = System.monotonic_time(:millisecond)
+    cfg = sampler.config
+    round = sampler.round
+
+    result =
+      try do
+        run_example(program, example, ex_idx, round, metric, cfg, sampler.demos_pool)
+      rescue
+        e ->
+          stamped = stamp_path(e, [:bootstrap_few_shot, :"round_#{round}", :"example_#{ex_idx}"])
+          item_error_emit(round, ex_idx, stamped)
+          {:error, stamped}
+      end
+
+    duration = System.monotonic_time(:millisecond) - start
+
+    case result do
+      {:ok, score, new_pool, kept} ->
+        trial_emit(round, ex_idx, score, kept)
+        candidate = slot_session(program, sampler.labeled_demos_slotted, new_pool)
+
+        sampler2 = %{
+          sampler
+          | demos_pool: new_pool,
+            examples_remaining_in_round: rest
+        }
+
+        trial = %{
+          trial_idx: trial_idx,
+          candidate_id: "bfs-r#{round}-i#{ex_idx}",
+          score: score * 1.0,
+          status: :ok,
+          stats: %{
+            round: round,
+            example_index: ex_idx,
+            kept: kept,
+            demos_in_pool: total_demos(new_pool)
+          },
+          duration_ms: duration,
+          error: nil,
+          error_class: nil,
+          candidate_program: candidate
+        }
+
+        {:cont, sampler2, trial}
+
+      {:error, err} ->
+        sampler2 = %{
+          sampler
+          | examples_remaining_in_round: rest,
+            error_count: sampler.error_count + 1
+        }
+
+        trial = %{
+          trial_idx: trial_idx,
+          candidate_id: nil,
+          score: nil,
+          status: :error,
+          stats: %{round: round, example_index: ex_idx},
+          duration_ms: duration,
+          error: err,
+          error_class: Errors.class_of(err),
+          candidate_program: nil
+        }
+
+        {:cont, sampler2, trial}
+    end
+  end
+
+  @impl Dsxir.Optimizer
+  @spec serialize_state(Sampler.t()) :: {:ok, binary(), 1}
+  def serialize_state(%Sampler{} = sampler) do
+    {:ok, :erlang.term_to_binary(sampler, [:deterministic]), 1}
+  end
+
+  @impl Dsxir.Optimizer
+  @spec deserialize_state(binary(), pos_integer()) ::
+          {:ok, Sampler.t()} | {:error, :version_mismatch | {:bad_sampler_shape, term()}}
+  def deserialize_state(blob, 1) when is_binary(blob) do
+    case :erlang.binary_to_term(blob, [:safe]) do
+      %Sampler{} = sampler -> {:ok, sampler}
+      other -> {:error, {:bad_sampler_shape, other}}
+    end
+  end
+
+  def deserialize_state(_blob, _version), do: {:error, :version_mismatch}
+
+  defp prepare_examples(trainset, %{deterministic: true}) do
+    trainset
+    |> Enum.sort_by(&:erlang.phash2/1)
+    |> Enum.with_index()
+  end
+
+  defp prepare_examples(trainset, %{deterministic: false}) do
+    Enum.with_index(trainset)
+  end
+
+  defp run_example(student, example, idx, round, metric, cfg, pool) do
+    diverse_lm = inject_diversity(Settings.resolve(:lm), round, idx, cfg)
+
+    {_prog, prediction, trace} =
+      Dsxir.with_trace(fn ->
+        Settings.context(
+          [
+            lm: diverse_lm,
+            metadata:
+              Map.merge(Settings.resolve(:metadata, %{}), %{
+                bootstrap_round: round,
+                bootstrap_index: idx
+              })
+          ],
+          fn -> dispatch(student, example) end
+        )
+      end)
+
+    coerced =
+      case metric do
+        nil -> 0.0
+        _ -> Metric.apply(metric, example, prediction, trace)
+      end
+
+    if coerced >= cfg.threshold do
+      new_pool = add_trace_to_pool(pool, trace, round, idx, cfg.max_bootstrapped_demos)
+      {:ok, coerced, new_pool, true}
+    else
+      {:ok, coerced, pool, false}
+    end
+  end
+
+  defp slot_session(%Program{predictors: predictors} = prog, labeled, demos_pool) do
+    decls = ModuleInfo.module(prog.module)
+
+    updated =
+      Map.new(predictors, fn {name, %Program.State{} = state} ->
+        decl = Enum.find(decls, &(&1.name == name))
+        compatible_labeled = compatible_demos(labeled, decl)
+        per_predictor = compatible_labeled ++ Map.get(demos_pool, name, [])
+        {name, %{state | demos: per_predictor}}
+      end)
+
+    %{prog | predictors: updated}
+  end
+
+  defp total_demos(pool) do
+    pool |> Map.values() |> Enum.map(&length/1) |> Enum.sum()
   end
 end

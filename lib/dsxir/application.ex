@@ -10,7 +10,11 @@ defmodule Dsxir.Application do
     children =
       [
         {Task.Supervisor, name: Dsxir.TaskSupervisor},
-        Dsxir.History
+        Dsxir.History,
+        Dsxir.OptimizerSession.Store.ETS,
+        {Registry, keys: :unique, name: Dsxir.OptimizerSession.Registry},
+        {DynamicSupervisor,
+         name: Dsxir.OptimizerSession.DynamicSupervisor, strategy: :one_for_one}
       ] ++ dev_children()
 
     opts = [strategy: :one_for_one, name: Dsxir.Supervisor]

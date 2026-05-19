@@ -236,7 +236,15 @@ defmodule Dsxir.Artifact do
     end
   end
 
-  @doc false
+  @doc """
+  Rebuild a `%Dsxir.Program{}` from an already-Jason-decoded artifact map. The
+  companion to `encode/1` for inline (file-IO-free) serialization; `load/3` is
+  the file path convenience built on this.
+
+  Returns `{:ok, program}` or `{:error, %Dsxir.Errors.Invalid.SignatureMismatch{}}`
+  when the persisted shape does not match the target module's declared
+  predictors.
+  """
   @spec decode(module(), map()) :: {:ok, Program.t()} | {:error, Exception.t()}
   def decode(target_module, decoded) when is_atom(target_module) and is_map(decoded) do
     decls = ModuleInfo.module(target_module)

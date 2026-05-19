@@ -67,3 +67,37 @@ defmodule Dsxir.Errors.Invalid.Tool do
     "invalid tool: tool=#{inspect(tool)} reason=#{inspect(reason)} inner=#{inspect(inner)}"
   end
 end
+
+defmodule Dsxir.Errors.Invalid.NotCheckpointable do
+  @moduledoc "Raised when `OptimizerSession.start_link/2` is called with an optimizer that does not implement the checkpointing callbacks."
+  use Splode.Error, fields: [:optimizer, :missing], class: :invalid
+
+  @type t :: %__MODULE__{optimizer: module(), missing: [atom()]}
+
+  def message(%{optimizer: opt, missing: missing}) do
+    "optimizer #{inspect(opt)} is not checkpointable; missing callbacks: #{inspect(missing)}. " <>
+      "Use Dsxir.Optimizer.compile/5 for synchronous one-shot runs."
+  end
+end
+
+defmodule Dsxir.Errors.Invalid.AlreadyTerminal do
+  @moduledoc "Raised when an OptimizerSession operation targets a session that is already in a terminal state."
+  use Splode.Error, fields: [:session_id, :status], class: :invalid
+
+  @type t :: %__MODULE__{session_id: String.t(), status: atom()}
+
+  def message(%{session_id: id, status: status}) do
+    "session #{inspect(id)} is in terminal status #{inspect(status)}; cannot resume or signal"
+  end
+end
+
+defmodule Dsxir.Errors.Invalid.ResumeMismatch do
+  @moduledoc "Raised when a checkpoint cannot be resumed because optimizer, sampler version, or trainset hash disagree."
+  use Splode.Error, fields: [:session_id, :reason, :expected, :got], class: :invalid
+
+  @type t :: %__MODULE__{session_id: String.t(), reason: atom(), expected: term(), got: term()}
+
+  def message(%{session_id: id, reason: reason, expected: e, got: g}) do
+    "resume mismatch for session #{inspect(id)}: reason=#{inspect(reason)} expected=#{inspect(e)} got=#{inspect(g)}"
+  end
+end

@@ -53,6 +53,13 @@ defmodule Dsxir.Optimizer.MIPROv2 do
     * `:degraded` — `true` when any proposer call failed and was substituted
       with an empty summary or candidate list.
     * `:wall_clock_ms` — wall time of the compile.
+
+  ## Session mode
+
+  `Dsxir.OptimizerSession.compile(MIPROv2, ...)` runs trials sequentially via
+  `step/6` and skips the periodic full-valset rerank performed by `compile/4`.
+  In session mode `best_program` is selected from minibatch scores only, so
+  outcomes may differ from a non-session compile against the same inputs.
   """
 
   @behaviour Dsxir.Optimizer
@@ -67,6 +74,7 @@ defmodule Dsxir.Optimizer.MIPROv2 do
   alias Dsxir.Optimizer.MIPROv2.Proposer.DatasetSummarizer
   alias Dsxir.Optimizer.MIPROv2.Proposer.Grounded
   alias Dsxir.Optimizer.MIPROv2.Proposer.ProgramSummarizer
+  alias Dsxir.Optimizer.MIPROv2.Sampler
   alias Dsxir.Optimizer.MIPROv2.Stats
   alias Dsxir.Optimizer.MIPROv2.Trial
   alias Dsxir.Optimizer.Search.TPE
@@ -589,4 +597,231 @@ defmodule Dsxir.Optimizer.MIPROv2 do
 
     %{program | metadata: metadata}
   end
+
+  @impl Dsxir.Optimizer
+  @doc """
+  Prepare a resumable MIPROv2 session.
+
+  Performs the one-time, expensive proposer LM calls (program summary, dataset
+  summary, grounded instruction proposals) and bootstraps the demo bundles so
+  the resulting `Dsxir.Optimizer.MIPROv2.Sampler` can be checkpointed and the
+  proposer never has to be called again across `step/6` invocations.
+
+  The returned planned-trial count equals `cfg.num_trials`.
+  """
+  @spec init_session(Program.t(), [Dsxir.Example.t()], nil | Dsxir.Metric.t(), keyword()) ::
+          {:ok, Sampler.t(), pos_integer()} | {:error, Exception.t()}
+  def init_session(_program, [], _metric, _opts) do
+    {:error, %Errors.Invalid.Trainset{reason: :empty, example: nil}}
+  end
+
+  def init_session(%Program{} = student, trainset, metric, opts)
+      when is_list(trainset) and is_list(opts) and (is_function(metric, 3) or is_nil(metric)) do
+    cfg = resolve_config(opts)
+    task_lm = Settings.resolve(:lm)
+    proposer_lm = Keyword.get(opts, :proposer_lm, task_lm)
+
+    {trainsplit, valset} = split_trainset(trainset, cfg.seed, cfg.valset_fraction)
+    minibatch_size = effective_minibatch(valset, cfg.minibatch_size)
+
+    decls = ModuleInfo.module(student.module)
+    current_instructions = current_instructions(student, decls)
+    demo_bundles = bootstrap_demos(student, trainsplit, metric, cfg, decls)
+
+    {program_summary, dataset_summary, proposer_calls_summary, summary_degraded} =
+      summarize(student.module, trainsplit, proposer_lm)
+
+    {proposed_instructions, proposer_calls_inst, proposer_degraded} =
+      propose_instructions(decls, program_summary, dataset_summary, cfg, proposer_lm)
+
+    candidates = Candidates.build(current_instructions, proposed_instructions, demo_bundles)
+
+    tpe_state =
+      cfg.sampler.init(candidates.space, Keyword.put_new(cfg.sampler_opts, :seed, cfg.seed))
+
+    sampler = %Sampler{
+      tpe_state: tpe_state,
+      candidates: candidates,
+      proposer_summaries: %{
+        program_summary: program_summary,
+        dataset_summary: dataset_summary,
+        degraded: summary_degraded or proposer_degraded
+      },
+      rng_seed: cfg.seed,
+      config: cfg,
+      best_so_far: nil,
+      trial_records: [],
+      full_evals: [],
+      proposer_calls: proposer_calls_summary + proposer_calls_inst,
+      batch_size: cfg.batch_size,
+      minibatch_full_eval_steps: cfg.minibatch_full_eval_steps,
+      top_k_full_eval: cfg.top_k_full_eval,
+      total_planned_trials: cfg.num_trials,
+      minibatch: valset_minibatch(valset, minibatch_size, cfg.seed),
+      valset: valset,
+      sampler_module: cfg.sampler
+    }
+
+    {:ok, sampler, cfg.num_trials}
+  end
+
+  @impl Dsxir.Optimizer
+  @doc """
+  Run a single trial against the session sampler.
+
+  Returns `{:halt, sampler, :budget_exhausted}` once the trial budget is met,
+  otherwise asks the underlying sampler module for one config, runs it through
+  `Trial.run/1` on the cached minibatch, and returns a `trial_result` map with
+  the nine keys expected by `Dsxir.OptimizerSession`.
+
+  Session mode skips the periodic full-valset rerank that `compile/4` runs.
+
+  Exceptions from the trial pipeline are caught and reported as
+  `status: :error` trials rather than crashing the session.
+  """
+  @spec step(
+          Sampler.t(),
+          non_neg_integer(),
+          Program.t(),
+          [Dsxir.Example.t()],
+          nil | Dsxir.Metric.t(),
+          keyword()
+        ) :: {:cont, Sampler.t(), map()} | {:halt, Sampler.t(), :budget_exhausted}
+  def step(%Sampler{} = sampler, trial_idx, %Program{} = program, _trainset, metric, _opts) do
+    if length(sampler.trial_records) >= sampler.total_planned_trials do
+      {:halt, sampler, :budget_exhausted}
+    else
+      do_step(sampler, trial_idx, program, metric)
+    end
+  end
+
+  defp do_step(%Sampler{} = sampler, trial_idx, program, metric) do
+    start = System.monotonic_time(:millisecond)
+    history = build_history(sampler.trial_records)
+
+    {[config], next_tpe} = sampler.sampler_module.suggest(sampler.tpe_state, history, 1)
+
+    try do
+      record =
+        Trial.run(%{
+          program: program,
+          config: config,
+          candidates: sampler.candidates,
+          examples: sampler.minibatch,
+          metric: metric,
+          cache_tid: nil,
+          settings_snapshot: Settings.snapshot(),
+          trial_index: trial_idx,
+          batch_size: max(1, sampler.batch_size)
+        })
+
+      next_tpe =
+        sampler.sampler_module.observe(next_tpe, [%{config: config, score: record.score}])
+
+      candidate_program = apply_best_config(program, sampler.candidates, config)
+      candidate_id = candidate_id_for(config)
+
+      trial = %{
+        trial_idx: trial_idx,
+        candidate_id: candidate_id,
+        score: record.score,
+        status: :ok,
+        stats: %{
+          lm_calls: record.lm_calls,
+          cached_calls: record.cached_calls,
+          trial_duration_ms: record.duration_ms,
+          config: config
+        },
+        duration_ms: System.monotonic_time(:millisecond) - start,
+        error: nil,
+        error_class: nil,
+        candidate_program: candidate_program
+      }
+
+      best_so_far = update_best(sampler.best_so_far, record.score, candidate_program)
+
+      next = %{
+        sampler
+        | tpe_state: next_tpe,
+          trial_records: [record_summary(record, candidate_id) | sampler.trial_records],
+          best_so_far: best_so_far
+      }
+
+      {:cont, next, trial}
+    rescue
+      e ->
+        trial = %{
+          trial_idx: trial_idx,
+          candidate_id: candidate_id_for(config),
+          score: nil,
+          status: :error,
+          stats: %{config: config},
+          duration_ms: System.monotonic_time(:millisecond) - start,
+          error: e,
+          error_class: Errors.class_of(e),
+          candidate_program: nil
+        }
+
+        next = %{
+          sampler
+          | tpe_state: next_tpe,
+            trial_records: [
+              %{trial_idx: trial_idx, score: nil, config: config, status: :error}
+              | sampler.trial_records
+            ]
+        }
+
+        {:cont, next, trial}
+    end
+  end
+
+  defp build_history(trial_records) do
+    trial_records
+    |> Enum.reverse()
+    |> Enum.filter(fn r -> Map.get(r, :status) != :error and not is_nil(Map.get(r, :score)) end)
+    |> Enum.map(fn r -> %{config: r.config, score: r.score} end)
+  end
+
+  defp record_summary(%Stats.Record{} = record, candidate_id) do
+    %{
+      trial_idx: record.trial_index,
+      score: record.score,
+      config: record.config,
+      candidate_id: candidate_id,
+      status: :ok,
+      lm_calls: record.lm_calls,
+      cached_calls: record.cached_calls
+    }
+  end
+
+  defp candidate_id_for(config) do
+    digest = :erlang.phash2(config)
+    "miprov2-c#{digest}"
+  end
+
+  defp update_best(nil, score, program) when is_float(score), do: {score, program}
+
+  defp update_best({best, _} = current, score, program) when is_float(score) do
+    if score > best, do: {score, program}, else: current
+  end
+
+  defp update_best(current, _score, _program), do: current
+
+  @impl Dsxir.Optimizer
+  @spec serialize_state(Sampler.t()) :: {:ok, binary(), 1}
+  def serialize_state(%Sampler{} = sampler) do
+    {:ok, :erlang.term_to_binary(sampler, [:deterministic]), 1}
+  end
+
+  @impl Dsxir.Optimizer
+  @spec deserialize_state(binary(), pos_integer()) ::
+          {:ok, Sampler.t()} | {:error, :version_mismatch | {:bad_sampler_shape, term()}}
+  def deserialize_state(blob, 1) when is_binary(blob) do
+    case :erlang.binary_to_term(blob, [:safe]) do
+      %Sampler{} = sampler -> {:ok, sampler}
+      other -> {:error, {:bad_sampler_shape, other}}
+    end
+  end
+
+  def deserialize_state(_blob, _version), do: {:error, :version_mismatch}
 end
