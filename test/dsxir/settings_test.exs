@@ -5,7 +5,7 @@ defmodule Dsxir.SettingsTest do
     prior = Dsxir.Settings.snapshot()
     :persistent_term.put({Dsxir.Settings, :globals}, Dsxir.Settings.default_globals())
     Process.delete({Dsxir.Settings, :stack})
-    on_exit(fn -> Dsxir.Settings.run(prior, fn -> :ok end) end)
+    on_exit(fn -> :persistent_term.put({Dsxir.Settings, :globals}, prior.globals) end)
     :ok
   end
 
@@ -108,10 +108,10 @@ defmodule Dsxir.SettingsTest do
     assert Dsxir.Settings.resolve(:metadata) == %{request_id: "r1"}
   end
 
-  describe "run/2 :persistent_term write avoidance" do
-    test "skips :persistent_term.put when snapshot globals match the live globals" do
-      Dsxir.Settings.configure(cache: false)
+  describe "run/2 process-local globals override" do
+    test "never writes to :persistent_term, even when snapshot globals differ from live" do
       snap = Dsxir.Settings.snapshot()
+      Dsxir.Settings.configure(cache: false)
 
       put_count =
         with_persistent_term_put_trace(fn ->
@@ -121,33 +121,97 @@ defmodule Dsxir.SettingsTest do
         end)
 
       assert put_count == 0,
-             "expected zero :persistent_term.put calls when snapshot matches live globals, got #{put_count}"
+             "expected zero :persistent_term.put calls inside run/2, got #{put_count}"
     end
 
-    test "still writes :persistent_term.put when snapshot globals differ from live globals" do
+    test "snapshot globals are visible to resolve/2 only inside the run/2 block" do
       snap = Dsxir.Settings.snapshot()
       Dsxir.Settings.configure(cache: false)
 
-      put_count =
-        with_persistent_term_put_trace(fn ->
-          Dsxir.Settings.run(snap, fn -> :ok end)
+      assert Dsxir.Settings.resolve(:cache) == false
+
+      inside =
+        Dsxir.Settings.run(snap, fn ->
+          Dsxir.Settings.resolve(:cache)
         end)
 
-      assert put_count == 1
+      assert inside == true
+      assert Dsxir.Settings.resolve(:cache) == false
     end
 
-    test "still restores the stack on a no-write run/2 invocation" do
-      Dsxir.Settings.context([cache: false], fn ->
-        snap = Dsxir.Settings.snapshot()
-        parent = self()
+    test "nested run/2 restores the outer override" do
+      outer = %{
+        Dsxir.Settings.snapshot()
+        | globals: %{Dsxir.Settings.default_globals() | cache: false}
+      }
 
-        Task.start(fn ->
-          inside = Dsxir.Settings.run(snap, fn -> Dsxir.Settings.resolve(:cache) end)
-          send(parent, {:inside, inside})
+      inner = %{
+        Dsxir.Settings.snapshot()
+        | globals: %{Dsxir.Settings.default_globals() | cache: true}
+      }
+
+      Dsxir.Settings.run(outer, fn ->
+        assert Dsxir.Settings.resolve(:cache) == false
+
+        Dsxir.Settings.run(inner, fn ->
+          assert Dsxir.Settings.resolve(:cache) == true
         end)
 
-        assert_receive {:inside, false}, 500
+        assert Dsxir.Settings.resolve(:cache) == false
       end)
+    end
+
+    test "override is restored even when fun raises" do
+      Dsxir.Settings.configure(cache: false)
+
+      snap = %{
+        Dsxir.Settings.snapshot()
+        | globals: %{Dsxir.Settings.default_globals() | cache: true}
+      }
+
+      assert_raise RuntimeError, "boom", fn ->
+        Dsxir.Settings.run(snap, fn -> raise "boom" end)
+      end
+
+      assert Dsxir.Settings.resolve(:cache) == false
+    end
+
+    test "concurrent workers replaying different snapshot globals do not leak" do
+      live_default = Dsxir.Settings.default_globals()
+      Dsxir.Settings.configure(cache: true)
+
+      snap_a = %{globals: %{live_default | cache: false}, stack: []}
+      snap_b = %{globals: %{live_default | cache: true}, stack: []}
+
+      parent = self()
+      barrier = make_ref()
+
+      t_a =
+        Task.async(fn ->
+          Dsxir.Settings.run(snap_a, fn ->
+            send(parent, {barrier, :a_ready})
+            assert_receive {^barrier, :go}, 500
+            Dsxir.Settings.resolve(:cache)
+          end)
+        end)
+
+      t_b =
+        Task.async(fn ->
+          Dsxir.Settings.run(snap_b, fn ->
+            send(parent, {barrier, :b_ready})
+            assert_receive {^barrier, :go}, 500
+            Dsxir.Settings.resolve(:cache)
+          end)
+        end)
+
+      assert_receive {^barrier, :a_ready}, 500
+      assert_receive {^barrier, :b_ready}, 500
+      send(t_a.pid, {barrier, :go})
+      send(t_b.pid, {barrier, :go})
+
+      assert Task.await(t_a) == false
+      assert Task.await(t_b) == true
+      assert Dsxir.Settings.resolve(:cache) == true
     end
   end
 

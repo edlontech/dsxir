@@ -1,12 +1,18 @@
 defmodule Dsxir.Settings do
   @moduledoc """
-  Three-layer settings stack: globals (`:persistent_term`), per-process scope
-  (process dict), per-call opts (passed as args).
+  Three-layer settings stack: globals (`:persistent_term`, with a per-process
+  override), per-process scope (process dict), per-call opts (passed as args).
 
-    * `configure/1` writes globals. Call once at boot.
+    * `configure/1` writes node-wide globals. Call once at boot.
     * `context/2` pushes a scoped frame for the duration of `fun.()`.
     * `snapshot/0` captures the current globals+stack; `run/2` replays them in a worker.
     * `resolve/2` looks up a key: stack top-down, then globals, then the provided default.
+
+  `run/2` installs the snapshot's globals as a *process-local* override — it never
+  writes to `:persistent_term`. Two workers replaying snapshots with different
+  globals (different LM, adapter, etc.) cannot observe each other's globals,
+  which matters for multi-tenant deployments where each tenant carries its own
+  globals view.
 
   `tenant_*` keys and `:lm` tuples whose config carries a non-nil `:api_key` are rejected
   by `configure/1` with a `Logger.warning`. `tenant_*` keys nested inside `:metadata` are
@@ -35,6 +41,7 @@ defmodule Dsxir.Settings do
         }
 
   @globals_key {__MODULE__, :globals}
+  @globals_override_key {__MODULE__, :globals_override}
   @stack_key {__MODULE__, :stack}
 
   @doc "Architectural defaults installed at application boot."
@@ -80,7 +87,7 @@ defmodule Dsxir.Settings do
       end
     end)
 
-    current = globals()
+    current = persistent_globals()
     :persistent_term.put(@globals_key, Map.merge(current, sanitised))
     :ok
   end
@@ -106,32 +113,33 @@ defmodule Dsxir.Settings do
   @doc """
   Replay a snapshot in the calling process for the duration of `fun.()`.
 
-  Writes globals into `:persistent_term` only when the snapshot's globals differ
-  from the live globals — `:persistent_term.put/2` triggers a system-wide GC of
-  every process holding references and is designed for write-once-read-many data,
-  so fan-out workers (e.g. `Dsxir.Predictor.Parallel`) replaying the same
-  snapshot must not pay that cost N times. The scope stack is always restored on
-  exit; globals are not. Intended for short-lived worker processes that have no
-  prior globals worth preserving. Do not use to "temporarily" swap globals in a
-  long-lived process.
+  Installs the snapshot's globals as a *process-local* override and restores the
+  scope stack. `:persistent_term` is never written, so concurrent workers
+  replaying snapshots with different globals (different LM, adapter, etc.) do
+  not leak globals into one another. Both the globals override and the scope
+  stack are restored on exit, including when `fun.()` raises.
+
+  Nesting is supported: an inner `run/2` shadows the outer override for the
+  duration of its block.
   """
   @spec run(%{globals: map(), stack: [map()]}, (-> any())) :: any()
   def run(%{globals: globals, stack: stack}, fun) when is_function(fun, 0) do
-    current = :persistent_term.get(@globals_key, default_globals())
-
-    if globals != current do
-      :persistent_term.put(@globals_key, globals)
-    end
-
+    prior_override = Process.get(@globals_override_key, :__none__)
     prior_stack = stack()
+
+    Process.put(@globals_override_key, globals)
     Process.put(@stack_key, stack)
 
     try do
       fun.()
     after
       Process.put(@stack_key, prior_stack)
+      restore_globals_override(prior_override)
     end
   end
+
+  defp restore_globals_override(:__none__), do: Process.delete(@globals_override_key)
+  defp restore_globals_override(map), do: Process.put(@globals_override_key, map)
 
   @doc "Walk the stack top-down, then globals, then return the default."
   @spec resolve(atom(), term()) :: term()
@@ -152,6 +160,13 @@ defmodule Dsxir.Settings do
   end
 
   defp globals do
+    case Process.get(@globals_override_key, :__none__) do
+      :__none__ -> persistent_globals()
+      map -> map
+    end
+  end
+
+  defp persistent_globals do
     :persistent_term.get(@globals_key, default_globals())
   end
 
