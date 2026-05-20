@@ -45,3 +45,13 @@ defmodule Dsxir.Errors.Framework.CycleDetected do
   def message(%{nodes: nodes}),
     do: "framework bug: cycle detected among nodes #{inspect(nodes)}"
 end
+
+defmodule Dsxir.Errors.Framework.GEPAOperatorFailed do
+  @moduledoc "Raised when a GEPA reflective operator fails to produce a valid offspring."
+  use Splode.Error,
+    fields: [:operator, :parents, :reason, :parent_error],
+    class: :framework
+
+  def message(%{operator: op, reason: r}),
+    do: "GEPA operator #{inspect(op)} failed: #{inspect(r)}"
+end

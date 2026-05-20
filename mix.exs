@@ -159,6 +159,7 @@ defmodule Dsxir.MixProject do
       {:ex_check, "~> 0.16", only: [:dev, :test], runtime: false},
       {:excoveralls, "~> 0.18", only: [:dev, :test]},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
+      {:jason, "~> 1.4"},
       {:mimic, "~> 2.0", only: :test},
       {:mix_audit, ">= 0.0.0", only: [:dev, :test], runtime: false},
       {:nimble_parsec, "~> 1.4"},

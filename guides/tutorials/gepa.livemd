@@ -1,0 +1,1142 @@
+<!-- livebook:{"persist_outputs":true} -->
+
+# Sentiment Extraction with GEPA
+
+```elixir
+Mix.install(
+  [
+    {:dsxir, path: Path.expand("../..", __DIR__)},
+    {:sycophant, "~> 0.4"},
+    {:kino, "~> 0.19"}
+  ]
+)
+```
+
+## Overview
+
+`Dsxir.Optimizer.GEPA` is a **reflective, Pareto-frontier evolutionary
+optimizer**. Where `Dsxir.Optimizer.MIPROv2` enumerates a fixed
+categorical space (instruction candidates X demo bundles) and searches
+it with TPE, GEPA grows a population of candidates over time and
+spends its budget compounding wins rather than rediscovering them.
+
+The optimizer:
+
+1. Bootstraps a seed individual: the seed instruction plus a starter
+   demo bundle per predictor.
+2. Maintains a population. Each individual is evaluated on a pinned
+   internal devset carved out of the trainset.
+3. Maintains a **per-example Pareto frontier** — an individual is on
+   the frontier iff it is the unique best on at least one devset
+   example. Tying does not promote.
+4. Selects parents weighted by frontier coverage: individuals that
+   uniquely win more examples are sampled more often.
+5. Mutates via three operators:
+   * `mutate_instr` — single parent. The reflective LM rewrites one
+     predictor's instruction, grounded in best- and worst-scoring
+     rollouts under the parent.
+   * `mutate_demos` — no LM call. Swaps the parent's demo bundle for
+     another bundle in the demo table.
+   * `crossover` — two parents. The reflective LM merges differing
+     instructions into a hybrid.
+6. Every child is admitted to the population (the historical record);
+   only frontier-eligible children expand the parent pool for the next
+   generation.
+
+When to reach for GEPA: tasks where per-example feedback is
+informative (the metric can articulate **why** a rollout failed), and
+where the search budget should be spent compounding wins rather than
+rediscovering them. The reflective LM is GEPA's leverage; feedback
+quality directly determines how fast it climbs.
+
+When run from a checkout of `dsxir`, `Mix.install/1` above resolves
+the library from the parent directory. If you launch this livebook
+from elsewhere, replace the `path:` line with `{:dsxir, "~> 0.1"}`.
+
+## Configuring the LM
+
+Architectural defaults live in `Dsxir.configure/1`. Credentials live
+in the per-request context, never on disk. We use a
+`Kino.Input.password` to keep the API key out of the notebook.
+
+```elixir
+Dsxir.configure(
+  lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-4o-mini"]},
+  adapter: Dsxir.Adapter.Chat
+)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
+```elixir
+api_key_input = Kino.Input.password("OPENAI_API_KEY")
+```
+
+```elixir
+lm_frame = fn ->
+  api_key = Kino.Input.read(api_key_input)
+
+  [
+    lm:
+      {Dsxir.LM.Sycophant,
+       [model: "openai:gpt-4o-mini", api_key: api_key, temperature: 0.2]}
+  ]
+end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+#Function<43.113135111/0 in :erl_eval.expr/6>
+```
+
+GEPA needs both a **task LM** (the model under optimization) and a
+**reflective LM** (used by `mutate_instr` and `crossover` to rewrite
+or merge instructions). The reflective LM defaults to the configured
+`:lm`. For a richer rewriter, point `:reflective_lm` at a larger
+model and keep the task LM small:
+
+<!-- livebook:{"force_markdown":true} -->
+
+```elixir
+Dsxir.compile(
+  Dsxir.Optimizer.GEPA, prog, trainset, metric,
+  auto: :light,
+  reflective_lm: {Dsxir.LM.Sycophant,
+                  [model: "openai:gpt-4o", api_key: api_key]}
+)
+```
+
+Here we use one model for both to keep the cost predictable.
+
+## Task signature and program
+
+A single predictor with a deliberately bland instruction. GEPA's job
+is to evolve a better one against grounded feedback.
+
+```elixir
+defmodule MyApp.Sentiment.Classify do
+  use Dsxir.Signature
+
+  @labels ~w(positive neutral negative)
+
+  signature do
+    instruction "Read the review and return the sentiment."
+
+    input :review, :string
+
+    output :sentiment, Zoi.enum(@labels),
+      desc: "Overall sentiment of the reviewer toward the product."
+
+    output :reason, :string,
+      desc: "One short sentence (under 25 words) that grounds the sentiment in the review's wording."
+  end
+end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+{:module, MyApp.Sentiment.Classify, <<70, 79, 82, 49, 0, 0, 122, ...>>, ...}
+```
+
+```elixir
+defmodule MyApp.Sentiment.Program do
+  use Dsxir.Module
+
+  predictor :classify, Dsxir.Predictor.Predict,
+    signature: MyApp.Sentiment.Classify
+
+  def forward(prog, %{review: review}) do
+    call(prog, :classify, %{review: review})
+  end
+end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+{:module, MyApp.Sentiment.Program, <<70, 79, 82, 49, 0, 0, 83, ...>>, ...}
+```
+
+One predictor keeps the tutorial focused. GEPA scales to multi-predictor
+programs — the demo table and the seed delta carry one entry per
+predictor — but the conceptual lift is easier to follow with a single
+node.
+
+## Trainset and valset
+
+Twenty-eight hand-written reviews spanning the three labels, with a
+handful of borderline rows (qualified praise, mixed signal,
+deadpan complaint) that make the metric's feedback useful.
+
+```elixir
+trainset_data = [
+  %{review: "Best blender I have ever owned, paid for itself in a month.",
+    sentiment: "positive"},
+  %{review: "Battery life is incredible and the screen is gorgeous.",
+    sentiment: "positive"},
+  %{review: "Tastes great, ships fast, will buy again.",
+    sentiment: "positive"},
+  %{review: "Setup took two minutes and it has worked flawlessly since.",
+    sentiment: "positive"},
+  %{review: "Customer service replaced the unit within a week, no questions asked.",
+    sentiment: "positive"},
+  %{review: "The fit is perfect and the fabric feels premium.",
+    sentiment: "positive"},
+  %{review: "Sounds fantastic, the bass is rich without being muddy.",
+    sentiment: "positive"},
+
+  %{review: "Arrived as described, does what the box says.",
+    sentiment: "neutral"},
+  %{review: "It works. Nothing special, nothing wrong.",
+    sentiment: "neutral"},
+  %{review: "Fine for the price. Would not pay more.",
+    sentiment: "neutral"},
+  %{review: "Looks the same as the previous model, basically a refresh.",
+    sentiment: "neutral"},
+  %{review: "Standard product, standard packaging, standard delivery.",
+    sentiment: "neutral"},
+  %{review: "Average quality, I have seen better and worse.",
+    sentiment: "neutral"},
+
+  %{review: "Broken on arrival, the lid cracked when I opened the box.",
+    sentiment: "negative"},
+  %{review: "Stopped charging after eleven days, support never replied.",
+    sentiment: "negative"},
+  %{review: "The fabric pilled immediately, looked five years old after one wash.",
+    sentiment: "negative"},
+  %{review: "Connection drops every ten minutes, completely unusable for calls.",
+    sentiment: "negative"},
+  %{review: "Returned it the same day, the smell alone was a dealbreaker.",
+    sentiment: "negative"},
+  %{review: "Worst purchase this year, save your money.",
+    sentiment: "negative"},
+
+  %{review: "Pretty good, but the buttons feel cheap and the manual is bad.",
+    sentiment: "positive"},
+  %{review: "Loved the design until the handle snapped on week two.",
+    sentiment: "negative"},
+  %{review: "It is fine I guess, kind of bland but it does the job.",
+    sentiment: "neutral"},
+  %{review: "Strong start, the first month was magic, then the battery degraded fast.",
+    sentiment: "negative"},
+  %{review: "Not what I expected at all — somehow that turned out to be a good thing.",
+    sentiment: "positive"},
+  %{review: "Reads like a budget product but performs like a flagship.",
+    sentiment: "positive"},
+  %{review: "I wanted to love it. I really did. I do not.",
+    sentiment: "negative"},
+  %{review: "Functional, occasionally delightful, never quite right.",
+    sentiment: "neutral"},
+  %{review: "Three stars rounded up. Two and a half, honestly.",
+    sentiment: "neutral"}
+]
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+[
+  %{review: "Best blender I have ever owned, paid for itself in a month.", sentiment: "positive"},
+  %{review: "Battery life is incredible and the screen is gorgeous.", sentiment: "positive"},
+  %{review: "Tastes great, ships fast, will buy again.", sentiment: "positive"},
+  %{review: "Setup took two minutes and it has worked flawlessly since.", sentiment: "positive"},
+  %{
+    review: "Customer service replaced the unit within a week, no questions asked.",
+    sentiment: "positive"
+  },
+  %{review: "The fit is perfect and the fabric feels premium.", sentiment: "positive"},
+  %{review: "Sounds fantastic, the bass is rich without being muddy.", sentiment: "positive"},
+  %{review: "Arrived as described, does what the box says.", sentiment: "neutral"},
+  %{review: "It works. Nothing special, nothing wrong.", sentiment: "neutral"},
+  %{review: "Fine for the price. Would not pay more.", sentiment: "neutral"},
+  %{review: "Looks the same as the previous model, basically a refresh.", sentiment: "neutral"},
+  %{review: "Standard product, standard packaging, standard delivery.", sentiment: "neutral"},
+  %{review: "Average quality, I have seen better and worse.", sentiment: "neutral"},
+  %{review: "Broken on arrival, the lid cracked when I opened the box.", sentiment: "negative"},
+  %{review: "Stopped charging after eleven days, support never replied.", sentiment: "negative"},
+  %{
+    review: "The fabric pilled immediately, looked five years old after one wash.",
+    sentiment: "negative"
+  },
+  %{
+    review: "Connection drops every ten minutes, completely unusable for calls.",
+    sentiment: "negative"
+  },
+  %{review: "Returned it the same day, the smell alone was a dealbreaker.", sentiment: "negative"},
+  %{review: "Worst purchase this year, save your money.", sentiment: "negative"},
+  %{review: "Pretty good, but the buttons feel cheap and the manual is bad.", sentiment: "positive"},
+  %{review: "Loved the design until the handle snapped on week two.", sentiment: "negative"},
+  %{review: "It is fine I guess, kind of bland but it does the job.", sentiment: "neutral"},
+  %{
+    review: "Strong start, the first month was magic, then the battery degraded fast.",
+    sentiment: "negative"
+  },
+  %{
+    review: "Not what I expected at all — somehow that turned out to be a good thing.",
+    sentiment: "positive"
+  },
+  %{review: "Reads like a budget product but performs like a flagship.", sentiment: "positive"},
+  %{review: "I wanted to love it. I really did. I do not.", sentiment: "negative"},
+  %{review: "Functional, occasionally delightful, never quite right.", sentiment: "neutral"},
+  %{review: "Three stars rounded up. Two and a half, honestly.", sentiment: "neutral"}
+]
+```
+
+```elixir
+valset_data = [
+  %{review: "Crisp picture, comfortable remote, easy setup.",
+    sentiment: "positive"},
+  %{review: "Solid choice, I'd recommend it to a friend without hesitation.",
+    sentiment: "positive"},
+  %{review: "Works fine, looks fine, costs more than it should.",
+    sentiment: "neutral"},
+  %{review: "Came on time, fits the description, no complaints worth raising.",
+    sentiment: "neutral"},
+  %{review: "Faulty out of the box, returns process was a nightmare.",
+    sentiment: "negative"},
+  %{review: "Squeaks loudly within a week. Refund pending.",
+    sentiment: "negative"},
+  %{review: "Beautiful product, terrible firmware. Net negative for me.",
+    sentiment: "negative"},
+  %{review: "Underwhelming on paper, somehow exactly what I needed in practice.",
+    sentiment: "positive"},
+  %{review: "Functional but joyless. It exists.",
+    sentiment: "neutral"},
+  %{review: "If you can find it on sale, sure. Otherwise skip it.",
+    sentiment: "neutral"},
+  %{review: "Honestly the best thing I have bought all year.",
+    sentiment: "positive"},
+  %{review: "Stopped working on day three. Do not bother.",
+    sentiment: "negative"}
+]
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+[
+  %{review: "Crisp picture, comfortable remote, easy setup.", sentiment: "positive"},
+  %{review: "Solid choice, I'd recommend it to a friend without hesitation.", sentiment: "positive"},
+  %{review: "Works fine, looks fine, costs more than it should.", sentiment: "neutral"},
+  %{
+    review: "Came on time, fits the description, no complaints worth raising.",
+    sentiment: "neutral"
+  },
+  %{review: "Faulty out of the box, returns process was a nightmare.", sentiment: "negative"},
+  %{review: "Squeaks loudly within a week. Refund pending.", sentiment: "negative"},
+  %{review: "Beautiful product, terrible firmware. Net negative for me.", sentiment: "negative"},
+  %{
+    review: "Underwhelming on paper, somehow exactly what I needed in practice.",
+    sentiment: "positive"
+  },
+  %{review: "Functional but joyless. It exists.", sentiment: "neutral"},
+  %{review: "If you can find it on sale, sure. Otherwise skip it.", sentiment: "neutral"},
+  %{review: "Honestly the best thing I have bought all year.", sentiment: "positive"},
+  %{review: "Stopped working on day three. Do not bother.", sentiment: "negative"}
+]
+```
+
+```elixir
+to_example = fn rows ->
+  Enum.map(rows, fn row ->
+    Dsxir.Example.new(row, input_keys: [:review])
+  end)
+end
+
+trainset = to_example.(trainset_data)
+valset = to_example.(valset_data)
+{length(trainset), length(valset)}
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+{28, 12}
+```
+
+GEPA splits the trainset internally into a bootstrap slice (for the
+seed demo bundles in the demo table) and a **pinned devset** that
+every individual is scored against. The split is controlled by
+`:devset_fraction` (default `0.3`). The external `valset` above is
+what we use later for the apples-to-apples comparison between
+baseline, BootstrapFewShot, and GEPA.
+
+## A metric — with feedback
+
+This is the differentiator. A scalar metric tells GEPA which
+individuals are better; a metric that also returns **feedback** tells
+the reflective LM **why** a rollout failed, which is exactly the
+signal the rewriter prompt asks for.
+
+```elixir
+defmodule MyApp.Sentiment.Metric do
+  alias Dsxir.Metric.ScoreWithFeedback
+
+  @negative_cues ~w(broken cracked snapped stopped nightmare worst returned smell faulty)
+  @positive_cues ~w(love loved best gorgeous incredible flawless fantastic perfect)
+
+  @spec score(Dsxir.Example.t(), Dsxir.Prediction.t(), nil | list()) :: ScoreWithFeedback.t()
+  def score(%Dsxir.Example{data: data}, %Dsxir.Prediction{fields: f}, _trace) do
+    review = String.downcase(data.review)
+    gold = data.sentiment
+    pred = f.sentiment
+
+    correctness = if gold == pred, do: 1.0, else: 0.0
+
+    reason = f.reason || ""
+    reason_words = reason |> String.split() |> length()
+
+    conciseness =
+      cond do
+        reason_words == 0 -> 0.0
+        reason_words <= 25 -> 1.0
+        reason_words <= 35 -> 0.5
+        true -> 0.0
+      end
+
+    feedback =
+      cond do
+        correctness == 1.0 and conciseness == 1.0 ->
+          "Correct sentiment and concise reason."
+
+        correctness == 0.0 ->
+          neg_hit = Enum.find(@negative_cues, &String.contains?(review, &1))
+          pos_hit = Enum.find(@positive_cues, &String.contains?(review, &1))
+
+          cond do
+            pred == "positive" and neg_hit ->
+              "Predicted positive but the review mentions '#{neg_hit}', which is a negative cue."
+
+            pred == "negative" and pos_hit ->
+              "Predicted negative but the review mentions '#{pos_hit}', which is a positive cue."
+
+            true ->
+              "Sentiment mismatch (gold=#{gold}, predicted=#{pred}); reason did not capture the dominant cue."
+          end
+
+        conciseness < 1.0 ->
+          "Sentiment correct but the reason is #{reason_words} words; keep it under 25."
+
+        true ->
+          "Borderline case; reason should explicitly cite the deciding phrase."
+      end
+
+    %ScoreWithFeedback{
+      score: %{correctness: correctness, conciseness: conciseness},
+      feedback: feedback
+    }
+  end
+end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+{:module, MyApp.Sentiment.Metric, <<70, 79, 82, 49, 0, 0, 25, ...>>, ...}
+```
+
+Two things worth flagging:
+
+1. The `score` field is a per-objective map (`%{correctness: ...,
+   conciseness: ...}`). `Dsxir.Metric.apply/4` aggregates it to a
+   scalar via the configured `:objective_aggregator` (default
+   `:mean`; also accepts `:min`, `:max`, or a `{module, fun}`
+   reference). `Dsxir.Evaluate` and other optimizers see only the
+   aggregated scalar; GEPA additionally consumes the raw `feedback`.
+2. The `feedback` string articulates the specific mismatch. That
+   string is what shows up inside GEPA's `Reflective.rewrite/4`
+   prompt as `feedback: "..."` next to each sampled rollout. A
+   feedback string that just says `"wrong"` carries no more signal
+   than the score itself; a string that names the deciding token
+   ("the review mentions 'broken'") is what lets the rewriter
+   actually fix the instruction.
+
+You can also pass a plain scalar metric (return a float; no
+`%ScoreWithFeedback{}`). GEPA still works, but the reflective LM has
+nothing to ground rewrites on and the optimizer effectively degrades
+to a search over the demo-mutation operator. We compare both shapes
+later in this notebook.
+
+## Baseline evaluation
+
+Run the zero-shot program against the external valset to set a floor.
+
+```elixir
+ev = %Dsxir.Evaluate{
+  devset: valset,
+  metric: &MyApp.Sentiment.Metric.score/3,
+  num_threads: 4,
+  max_errors: 2
+}
+
+Dsxir.context(lm_frame.(), fn ->
+  prog = Dsxir.Program.new(MyApp.Sentiment.Program)
+  result = Dsxir.evaluate(ev, prog)
+
+  %{score: result.score, errors: result.errors}
+end)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{errors: %{count: 0, by_class: %{}}, score: 87.5}
+```
+
+The bland seed instruction does the obvious cases ("Best blender
+ever" -> positive) and stumbles on the borderline rows ("Functional
+but joyless" -> easy to flip to negative; "Underwhelming on paper,
+somehow exactly what I needed" -> easy to flip to neutral). That gap
+is what GEPA's reflective rewriter has to close.
+
+## Compiling with BootstrapFewShot
+
+A comparison point: how much of the lift comes from demos alone, with
+the instruction left untouched?
+
+```elixir
+Dsxir.context(lm_frame.(), fn ->
+  prog = Dsxir.Program.new(MyApp.Sentiment.Program)
+
+  {:ok, bfs_compiled, bfs_stats} =
+    Dsxir.compile(
+      Dsxir.Optimizer.BootstrapFewShot,
+      prog,
+      trainset,
+      &MyApp.Sentiment.Metric.score/3,
+      max_labeled_demos: 2,
+      max_bootstrapped_demos: 4,
+      threshold: 0.7
+    )
+
+  result = Dsxir.evaluate(ev, bfs_compiled)
+  %{stats: bfs_stats, score: result.score}
+end)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{
+  stats: %{
+    threshold: 0.7,
+    max_errors: 10,
+    error_count: 0,
+    labeled_demos: 2,
+    bootstrapped_demos: 4,
+    predictor_count: 1,
+    rounds: 1
+  },
+  score: 95.8
+}
+```
+
+Demos alone close most of the gap on this task. GEPA's seed
+individual uses a demo bundle drawn from the same machinery, so a
+healthy GEPA compile should at least match BFS and then climb as the
+reflective rewrites land. We will see below that on a `:light`
+budget over a 28-example trainset this does not always happen — and
+why.
+
+## Compiling with GEPA
+
+The headline call. `auto: :light` keeps the trial budget small for
+the walkthrough.
+
+```elixir
+Dsxir.Optimizer.GEPA.Auto.expand([], :light)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{
+  seed: 0,
+  devset_fraction: 0.3,
+  num_trials: 20,
+  num_demo_bundles: 4,
+  operator_weights: %{mutate_instr: 0.7, mutate_demos: 0.2, crossover: 0.1},
+  rollout_k_success: 3,
+  rollout_k_fail: 3
+}
+```
+
+Twenty trials, four demo bundles in the table, devset is 30% of the
+trainset (so ~9 examples). The operator mix is weighted toward
+`mutate_instr` — GEPA's belief is that instruction surface carries
+most of the lift once feedback is rich.
+
+```elixir
+compile_path = Path.join(System.tmp_dir!(), "sentiment_gepa.v1.json")
+
+{compiled, stats} =
+  Dsxir.context(lm_frame.(), fn ->
+    prog = Dsxir.Program.new(MyApp.Sentiment.Program)
+
+    {:ok, compiled, stats} =
+      Dsxir.compile(
+        Dsxir.Optimizer.GEPA,
+        prog,
+        trainset,
+        &MyApp.Sentiment.Metric.score/3,
+        auto: :light,
+        seed: 42
+      )
+
+    Dsxir.save!(compiled, compile_path)
+    {compiled, stats}
+  end)
+
+stats
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%Dsxir.Optimizer.GEPA.Stats{
+  best_score: 0.9375,
+  best_individual_id: "ind_4369F68",
+  generations: 20,
+  population_size: 21,
+  frontier_size: 2,
+  trials: [
+    %{
+      operator: :mutate_demos,
+      score: 0.9375,
+      trial_idx: 0,
+      individual_id: "ind_4369F68",
+      accepted?: true
+    },
+    %{
+      operator: :mutate_instr,
+      score: 0.9375,
+      trial_idx: 1,
+      individual_id: "ind_452EE52",
+      accepted?: false
+    },
+    %{
+      operator: :mutate_instr,
+      score: 0.9375,
+      trial_idx: 2,
+      individual_id: "ind_4E3EECE",
+      accepted?: false
+    },
+    %{
+      operator: :mutate_instr,
+      score: 0.9375,
+      trial_idx: 3,
+      individual_id: "ind_43C5C5E",
+      accepted?: false
+    },
+    %{
+      operator: :mutate_instr,
+      score: 0.9375,
+      trial_idx: 4,
+      individual_id: "ind_3FDD7C6",
+      accepted?: false
+    },
+    %{
+      operator: :mutate_instr,
+      score: 0.9375,
+      trial_idx: 5,
+      individual_id: "ind_D0E3FB",
+      accepted?: false
+    },
+    %{
+      operator: :mutate_instr,
+      score: 0.9375,
+      trial_idx: 6,
+      individual_id: "ind_21BF818",
+      accepted?: false
+    },
+    %{
+      operator: :crossover,
+      score: 0.9375,
+      trial_idx: 7,
+      individual_id: "ind_1FD6741",
+      accepted?: false
+    },
+    %{
+      operator: :crossover,
+      score: 0.9375,
+      trial_idx: 8,
+      individual_id: "ind_2CE31CF",
+      accepted?: false
+    },
+    %{
+      operator: :mutate_demos,
+      score: 0.9375,
+      trial_idx: 9,
+      individual_id: "ind_54D9274",
+      accepted?: false
+    },
+    %{
+      operator: :mutate_instr,
+      score: 0.9375,
+      trial_idx: 10,
+      individual_id: "ind_33DEB7B",
+      accepted?: false
+    },
+    %{
+      operator: :mutate_demos,
+      score: 0.875,
+      trial_idx: 11,
+      individual_id: "ind_404E7E7",
+      accepted?: false
+    },
+    %{
+      operator: :mutate_instr,
+      score: 0.9375,
+      trial_idx: 12,
+      individual_id: "ind_5637E2E",
+      accepted?: false
+    },
+    %{
+      operator: :mutate_instr,
+      score: 0.875,
+      trial_idx: 13,
+      individual_id: "ind_3C8C0E2",
+      accepted?: false
+    },
+    %{
+      operator: :mutate_demos,
+      score: 0.9375,
+      trial_idx: 14,
+      individual_id: "ind_217E436",
+      accepted?: false
+    },
+    %{operator: :mutate_instr, score: 0.9375, trial_idx: 15, ...},
+    ...
+  ],
+  ...
+}
+```
+
+The fields worth walking through:
+
+* `:best_score` — the aggregated metric mean for the winning
+  individual on the pinned devset.
+* `:best_individual_id` — opaque id of the chosen child. Useful for
+  cross-referencing trial records.
+* `:generations` — how many times a child made it onto the frontier
+  and was eligible to become a parent next round.
+* `:population_size` — total individuals admitted (seed + every
+  evaluated child, kept for the historical record).
+* `:frontier_size` — number of individuals currently best-on-at-least-one
+  devset example. Frontier size is bounded by devset size.
+* `:trials` — chronological list of `%{trial_idx, individual_id,
+  operator, accepted?, score}` records. `accepted?` is true iff the
+  child reached the frontier (not merely the population).
+* `:proposer_calls` — calls to the reflective LM
+  (`mutate_instr` + `crossover` trials minus the ones that errored
+  before the call). `mutate_demos` is free of LM cost.
+* `:total_devset_evals` — sum of devset evaluations across the run.
+  Each new child is evaluated on the full devset.
+* `:total_task_lm_calls` — task LM calls executed against the devset.
+* `:degraded` — `true` when any reflective call failed and the
+  trial was charged with an error class. Flag this in CI; you do not
+  want to publish an artifact that silently dropped half its
+  rewrites.
+* `:wall_clock_ms` — end-to-end compile time.
+
+## Inspecting the population and frontier
+
+The chosen individual's instruction and demos are baked into the
+compiled program's predictor state:
+
+```elixir
+state = compiled.predictors[:classify]
+
+%{
+  instruction: state.instructions_override,
+  demo_count: length(state.demos),
+  score: compiled.metadata.score,
+  compiled_with: compiled.metadata.compiled_with
+}
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{
+  score: 0.9375,
+  instruction: "Read the review and return the sentiment.",
+  compiled_with: Dsxir.Optimizer.GEPA,
+  demo_count: 0
+}
+```
+
+On this run the winner is the trial-0 child, produced by
+`mutate_demos` — the operator that swaps demo bundles without calling
+the reflective LM. It happened to land on the empty bundle, which
+scored 0.9375 on the pinned devset and was admitted to the frontier.
+Every subsequent `mutate_instr` / `crossover` trial scored at-or-below
+0.9375 in aggregate and tied on the per-example profile, so none of
+the rewrites uniquely won an example and none were accepted.
+
+That outcome is informative in itself: on a small devset (~9
+examples), the aggregate score saturates fast, and the first child
+that ties at the ceiling can lock in. The instruction never gets
+edited because no rewrite produces a strictly-better profile to
+displace it. The full `%Stats{}` is still on the program under
+`compiled.metadata._gepa_stats` if you want to walk the rejected
+trials and see what the reflective LM proposed.
+
+## External valset evaluation
+
+Load the saved artifact and evaluate it on the same external valset
+we used for the baseline and BootstrapFewShot:
+
+```elixir
+Dsxir.context(lm_frame.(), fn ->
+  loaded = Dsxir.load!(MyApp.Sentiment.Program, compile_path)
+  result = Dsxir.evaluate(ev, loaded)
+  %{score: result.score}
+end)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{score: 87.5}
+```
+
+External-valset scores on this run: baseline **87.5**,
+BootstrapFewShot **95.8**, GEPA (`:light`) **87.5**. GEPA tied the
+zero-shot baseline and underperformed BootstrapFewShot here — the
+winning individual ended up with the seed instruction and an empty
+demo bundle (see the section above), so it carries none of BFS's
+demo lift.
+
+That is the honest single-seed `:light` story on a 28-example train
+/ 12-example valset: the pinned devset is ~9 examples, the score
+saturates at 0.9375 inside a few trials, and the reflective LM
+cannot find rewrites that uniquely-win any pinned example. Tasks
+this small are exactly where MIPROv2's exhaustive-grid behavior or
+plain BFS will often beat GEPA — GEPA's advantage is in compounding
+wins across many generations, which needs a richer signal than a
+9-example ceiling. Bumping to `:medium` (60 trials, 6 demo bundles)
+or `:heavy` (150 trials), widening the devset, and averaging over
+several seeds is the standard recipe before claiming a result.
+
+## The role of feedback
+
+The most distinctive thing about GEPA is that its reflective LM
+literally reads the metric's feedback strings while rewriting
+instructions. If those strings are uninformative, the rewriter
+falls back to guessing.
+
+Here is the same compile with a scalar-only metric (no feedback):
+
+```elixir
+defmodule MyApp.Sentiment.MetricNoFeedback do
+  def score(%Dsxir.Example{data: data}, %Dsxir.Prediction{fields: f}, _trace) do
+    if data.sentiment == f.sentiment, do: 1.0, else: 0.0
+  end
+end
+
+Dsxir.context(lm_frame.(), fn ->
+  prog = Dsxir.Program.new(MyApp.Sentiment.Program)
+
+  {:ok, plain_compiled, plain_stats} =
+    Dsxir.compile(
+      Dsxir.Optimizer.GEPA,
+      prog,
+      trainset,
+      &MyApp.Sentiment.MetricNoFeedback.score/3,
+      auto: :light,
+      seed: 42
+    )
+
+  result = Dsxir.evaluate(ev, plain_compiled)
+  %{best_score: plain_stats.best_score, frontier_size: plain_stats.frontier_size, valset: result.score}
+end)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{best_score: 0.875, frontier_size: 2, valset: 87.5}
+```
+
+The compile completed without errors, but the reflective LM had
+nothing to ground its rewrites on — the `rewrite_prompt` rendered
+`feedback: nil` next to every rollout — so the rewriter mostly
+restated the seed. On this run the feedback and no-feedback paths
+land on the same valset score (87.5) because the devset is too small
+for either signal to pull GEPA off the saturated ceiling; on richer
+tasks with longer compiles, the gap typically opens up in the
+feedback-driven direction.
+
+Feedback is GEPA's leverage. Engineer it deliberately:
+
+* Name the deciding token or phrase in the example.
+* Distinguish "wrong category" from "right category, wrong
+  justification".
+* Keep strings short — they are concatenated into the rewriter
+  prompt and contribute to its context.
+
+## Operator weights
+
+The default mix at `:light` is `mutate_instr: 0.7, mutate_demos: 0.2,
+crossover: 0.1`. Tilt it when you know more about the task than the
+preset does. If you trust your seed demos and want the instruction
+to do all the evolving:
+
+```elixir
+Dsxir.context(lm_frame.(), fn ->
+  prog = Dsxir.Program.new(MyApp.Sentiment.Program)
+
+  {:ok, _instr_heavy, instr_stats} =
+    Dsxir.compile(
+      Dsxir.Optimizer.GEPA,
+      prog,
+      trainset,
+      &MyApp.Sentiment.Metric.score/3,
+      auto: :light,
+      seed: 42,
+      operator_weights: %{mutate_instr: 0.9, mutate_demos: 0.05, crossover: 0.05}
+    )
+
+  %{
+    best_score: instr_stats.best_score,
+    by_operator:
+      Enum.frequencies_by(instr_stats.trials, & &1.operator)
+  }
+end)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{best_score: 0.9375, by_operator: %{mutate_instr: 19, crossover: 1}}
+```
+
+The inverse is also useful: when the seed instruction is already
+strong but you want GEPA to explore alternative demo selections,
+tilt toward `mutate_demos` (no LM cost) and `crossover` (free in the
+demo dimension because crossovers carry the parents' demo bundles
+through).
+
+## Telemetry
+
+GEPA emits the generic optimizer events and one of its own. Attach
+handlers before the compile to watch.
+
+```elixir
+ref =
+  :telemetry_test.attach_event_handlers(self(), [
+    [:dsxir, :optimizer, :start],
+    [:dsxir, :optimizer, :stop],
+    [:dsxir, :optimizer, :gepa, :trial]
+  ])
+
+:ok
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
+```elixir
+Dsxir.context(lm_frame.(), fn ->
+  prog = Dsxir.Program.new(MyApp.Sentiment.Program)
+
+  {:ok, _c, _s} =
+    Dsxir.compile(
+      Dsxir.Optimizer.GEPA,
+      prog,
+      trainset,
+      &MyApp.Sentiment.Metric.score/3,
+      auto: :light,
+      seed: 7
+    )
+end)
+
+flush_events = fn ->
+  flusher = fn flusher ->
+    receive do
+      {event, _ref, meas, meta} ->
+        [%{event: event, meas: meas, meta: Map.take(meta, [:trial_idx, :operator, :accepted_to_frontier, :generation])}
+         | flusher.(flusher)]
+    after
+      0 -> []
+    end
+  end
+
+  flusher.(flusher)
+end
+
+flush_events.() |> Enum.take(8)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+[
+  %{meta: %{}, event: [:dsxir, :optimizer, :start], meas: %{system_time: 1779280806561935896}},
+  %{meta: %{}, event: [:dsxir, :optimizer, :start], meas: %{system_time: 1779280806562473356}},
+  %{meta: %{}, event: [:dsxir, :optimizer, :stop], meas: %{duration: 14354768798, score: nil}},
+  %{meta: %{}, event: [:dsxir, :optimizer, :start], meas: %{system_time: 1779280820917267779}},
+  %{meta: %{}, event: [:dsxir, :optimizer, :stop], meas: %{duration: 13834473078, score: nil}},
+  %{
+    meta: %{operator: :crossover, trial_idx: 0, accepted_to_frontier: false, generation: 1},
+    event: [:dsxir, :optimizer, :gepa, :trial],
+    meas: %{score: 1.0, duration_ms: 10301, frontier_size: 1}
+  },
+  %{
+    meta: %{operator: :mutate_demos, trial_idx: 1, accepted_to_frontier: false, generation: 2},
+    event: [:dsxir, :optimizer, :gepa, :trial],
+    meas: %{score: 1.0, duration_ms: 12842, frontier_size: 1}
+  },
+  %{
+    meta: %{operator: :mutate_instr, trial_idx: 2, accepted_to_frontier: false, generation: 3},
+    event: [:dsxir, :optimizer, :gepa, :trial],
+    meas: %{score: 1.0, duration_ms: 6208, frontier_size: 1}
+  }
+]
+```
+
+A few useful patterns for production:
+
+* Track `meas.frontier_size` from `[:dsxir, :optimizer, :gepa, :trial]`
+  to graph frontier growth over time. A flatlining frontier means
+  the rewrites are not finding new uniquely-best examples.
+* Count `meta.accepted_to_frontier == true` events to attribute
+  budget. The acceptance rate is a direct readout on whether your
+  feedback engineering is paying off.
+* Forward `meta.error_class` to alert on reflective-LM failures;
+  pair with `stats.degraded` in your CI assertions.
+
+When GEPA runs inside `Dsxir.OptimizerSession`, the session driver
+republishes each trial as `[:dsxir, :optimizer_session, :trial]` and
+propagates `tenant_id` (and any other metadata) from the surrounding
+`Dsxir.context([metadata: %{tenant_id: ...}], ...)`. That is the
+event to subscribe in a multi-tenant deployment.
+
+## Session mode (pause/resume)
+
+GEPA implements all four `Dsxir.Optimizer` callbacks (`init_session/4`,
+`step/6`, `serialize_state/1`, `deserialize_state/2`), so it drops
+into `Dsxir.OptimizerSession` for long compiles with crash recovery
+and checkpointing.
+
+<!-- livebook:{"force_markdown":true} -->
+
+```elixir
+{:ok, compiled, stats} =
+  Dsxir.OptimizerSession.compile(
+    Dsxir.Optimizer.GEPA,
+    prog,
+    trainset,
+    &MyApp.Sentiment.Metric.score/3,
+    opts: [auto: :heavy, seed: 42],
+    checkpoint_every: 5,
+    checkpoint_path: "/var/dsxir/gepa-sentiment.session"
+  )
+```
+
+A `:heavy` GEPA compile is a serious budget (150 trials, each
+running a full devset evaluation plus possibly a reflective LM
+call). The session API trades a small overhead for the ability to
+kill and resume — useful when the compile outlives a single process
+or you want to inspect intermediate frontiers. The
+`OptimizerSession` tutorial covers the deeper mechanics; for GEPA
+specifically, the only thing to know is that the sampler is fully
+serialisable.
+
+## When to use GEPA vs MIPROv2
+
+Reach for **GEPA** when:
+
+* You can write **rich per-example feedback strings** in the metric.
+  This is the single biggest predictor of whether GEPA will outperform
+  MIPROv2 on your task.
+* The **instruction surface matters more than demo selection** —
+  ambiguous category boundaries, multi-criterion outputs, anywhere
+  the wording of the directive changes which calls the model makes.
+* You can spend a **longer compile budget** in exchange for
+  compounding wins across generations.
+
+Reach for **MIPROv2** when:
+
+* The categorical search space is clearly bounded and you trust
+  TPE to find the best cell. (MIPROv2 builds the full grid up front;
+  GEPA grows the space.)
+* You cannot easily engineer informative feedback strings, and a
+  flat scalar metric is all you have.
+* You want a predictable, fixed trial budget and a single-shot
+  compile.
+
+Either works well when the dataset has ambiguous boundaries and the
+instruction wording is on the lift path. The deciding question is
+practical: **can you write feedback strings?** If yes, GEPA. If no,
+MIPROv2.
+
+## Multi-tenant deployment
+
+A GEPA-compiled program deploys exactly like any other compiled
+artifact. The chosen instruction and demos are baked into the saved
+JSON; per-tenant context only carries credentials and metadata.
+
+<!-- livebook:{"force_markdown":true} -->
+
+```elixir
+def call(conn, _opts) do
+  tenant = conn.assigns.tenant
+
+  Dsxir.context(
+    [
+      lm: {Dsxir.LM.Sycophant,
+           [model: tenant.model_id, api_key: tenant.api_key]},
+      metadata: %{tenant_id: tenant.id, request_id: conn.assigns.request_id}
+    ],
+    fn ->
+      program =
+        Dsxir.load!(MyApp.Sentiment.Program,
+                    "tenants/#{tenant.id}/sentiment.json")
+
+      {_program, pred} =
+        MyApp.Sentiment.Program.forward(program, %{
+          review: conn.params["review"]
+        })
+
+      json(conn, pred.fields)
+    end
+  )
+end
+```
+
+`Dsxir.load!/2` validates that the artifact's signatures match the
+target module, so a signature drift fails loudly with
+`Dsxir.Errors.Invalid.SignatureMismatch` rather than silently
+producing wrong demos.
+
+## Where to go next
+
+* **Pass a stronger `:reflective_lm`** while keeping the task LM
+  cheap. The rewriter only fires on `mutate_instr` and `crossover`
+  trials, so a more expensive model there has a fixed, predictable
+  cost.
+* **Tune `:devset_fraction` and `:num_demo_bundles`.** Wider devsets
+  reduce per-trial noise; more demo bundles widen `mutate_demos`'s
+  search space at no LM cost.
+* **Use a per-objective metric.** The map form
+  (`score: %{correctness: ..., conciseness: ...}`) lets you keep
+  semantic and stylistic criteria separate, and you can swap the
+  aggregator (`:mean | :min | :max | {module, fun}`) to express how
+  the objectives trade off.
+* **Move long compiles into `Dsxir.OptimizerSession`** for
+  checkpointing and crash recovery.
+* **Subscribe to `[:dsxir, :optimizer, :gepa, :trial]`** to graph
+  frontier growth and operator acceptance rates over the compile.
+  Those two curves together tell you whether your feedback strings
+  are doing their job.

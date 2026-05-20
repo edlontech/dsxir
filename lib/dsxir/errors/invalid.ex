@@ -138,3 +138,16 @@ defmodule Dsxir.Errors.Invalid.RuntimeProgram do
   defp format_path([]), do: "(root)"
   defp format_path(parts), do: Enum.map_join(parts, "/", &to_string/1)
 end
+
+defmodule Dsxir.Errors.Invalid.EmptyDevset do
+  @moduledoc "Raised when GEPA cannot carve a non-empty devset from the trainset."
+  use Splode.Error,
+    fields: [:reason, :trainset_size, :devset_fraction],
+    class: :invalid
+
+  def message(%{reason: r, trainset_size: n, devset_fraction: f}) do
+    "GEPA could not carve a non-empty devset from #{n} trainset examples " <>
+      "with devset_fraction=#{inspect(f)} (reason: #{inspect(r)}). " <>
+      "Provide at least 2 examples or lower :devset_fraction."
+  end
+end

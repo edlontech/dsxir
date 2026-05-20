@@ -18,6 +18,8 @@ defmodule Dsxir.Metric do
 
   alias Dsxir.Errors
 
+  @gepa_feedback_slot :__dsxir_gepa_feedback__
+
   @type t ::
           (Dsxir.Example.t(), Dsxir.Prediction.t(), nil | list() ->
              number() | boolean())
@@ -33,10 +35,29 @@ defmodule Dsxir.Metric do
     metric.(example, prediction, trace) |> coerce(example)
   end
 
+  @doc """
+  Reads and clears the GEPA feedback slot set by the most recent
+  `Dsxir.Metric.apply/4` call in this process. Returns `nil` when no metric in
+  this process returned `%Dsxir.Metric.ScoreWithFeedback{}`. Internal helper for
+  `Dsxir.Optimizer.GEPA.Evaluator`; not part of the public metric contract.
+  """
+  @spec drain_gepa_feedback() :: Dsxir.Metric.ScoreWithFeedback.t() | nil
+  def drain_gepa_feedback do
+    case Process.delete(@gepa_feedback_slot) do
+      %Dsxir.Metric.ScoreWithFeedback{} = swf -> swf
+      _ -> nil
+    end
+  end
+
   defp coerce(true, _example), do: 1.0
   defp coerce(false, _example), do: 0.0
   defp coerce(n, _example) when is_integer(n), do: n * 1.0
   defp coerce(n, _example) when is_float(n), do: n
+
+  defp coerce(%Dsxir.Metric.ScoreWithFeedback{} = swf, example) do
+    Process.put(@gepa_feedback_slot, swf)
+    swf.score |> aggregate(example) |> coerce(example)
+  end
 
   defp coerce(other, example) do
     raise %Errors.Invalid.Metric{
@@ -45,4 +66,50 @@ defmodule Dsxir.Metric do
       expected: "number() | boolean()"
     }
   end
+
+  defp aggregate(score, _example) when is_number(score), do: score
+
+  defp aggregate(%{} = score_map, _example) when map_size(score_map) > 0 do
+    apply_aggregator(score_map, resolve_aggregator())
+  end
+
+  defp aggregate(other, example) do
+    raise %Errors.Invalid.Metric{
+      example: example,
+      returned: other,
+      expected: "float() | %{atom() => float()} inside ScoreWithFeedback.score"
+    }
+  end
+
+  defp resolve_aggregator do
+    case Application.get_env(:dsxir, :objective_aggregator, :mean) do
+      :mean ->
+        :mean
+
+      :min ->
+        :min
+
+      :max ->
+        :max
+
+      {m, f} when is_atom(m) and is_atom(f) ->
+        {m, f}
+
+      other ->
+        raise %Errors.Invalid.Configuration{
+          key: :objective_aggregator,
+          value: other,
+          reason: "expected :mean | :min | :max | {module, fun}"
+        }
+    end
+  end
+
+  defp apply_aggregator(score_map, :mean) do
+    values = Map.values(score_map)
+    Enum.sum(values) / length(values)
+  end
+
+  defp apply_aggregator(score_map, :min), do: score_map |> Map.values() |> Enum.min()
+  defp apply_aggregator(score_map, :max), do: score_map |> Map.values() |> Enum.max()
+  defp apply_aggregator(score_map, {m, f}), do: apply(m, f, [score_map])
 end
