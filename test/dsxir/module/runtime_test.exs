@@ -21,7 +21,7 @@ defmodule Dsxir.Module.RuntimeTest do
       prog = Dsxir.Program.new(AnswerProgram)
       {prog2, pred} = AnswerProgram.forward(prog, %{question: "ultimate?"})
       assert pred[:answer] == "42"
-      assert prog2.module == AnswerProgram
+      assert %Dsxir.Program.Source.Module{module: AnswerProgram} = prog2.source
     end)
   end
 
@@ -32,6 +32,20 @@ defmodule Dsxir.Module.RuntimeTest do
     assert_raise Dsxir.Errors.Invalid.Module, fn ->
       Dsxir.Module.Runtime.call(prog, name, %{question: "x"})
     end
+  end
+
+  test "call/4 raises ArgumentError when :degraded opt is not a boolean" do
+    expect(Dsxir.LM.Sycophant, :generate_text, fn _, _, _ ->
+      {:ok, "[[ ## answer ## ]]\n42", Dsxir.LM.empty_usage()}
+    end)
+
+    Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
+      prog = Dsxir.Program.new(AnswerProgram)
+
+      assert_raise ArgumentError, ~r/expected :degraded opt to be a boolean/, fn ->
+        Dsxir.Module.Runtime.call(prog, :answer, %{question: "x"}, degraded: "yes")
+      end
+    end)
   end
 
   test "call/4 pushes predictor name onto :path in merged opts" do

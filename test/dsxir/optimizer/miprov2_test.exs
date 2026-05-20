@@ -437,4 +437,86 @@ defmodule Dsxir.Optimizer.MIPROv2Test do
       assert_receive {:tel, [:dsxir, :miprov2, :proposer], _, _}, 1_000
     end
   end
+
+  describe "runtime-program source" do
+    setup do
+      Dsxir.Test.Fixtures.ScriptedLM.clear_script()
+      on_exit(&Dsxir.Test.Fixtures.ScriptedLM.clear_script/0)
+      :ok
+    end
+
+    test "compile/4 routes predictor enumeration through Source.predictors/1" do
+      Dsxir.Test.Fixtures.ScriptedLM.install_script(%{
+        answer: fn _ -> %{a: "ok"} end
+      })
+
+      rp = Dsxir.Test.Fixtures.RuntimePrograms.equivalent_to_qa()
+      prog = Program.from_runtime(rp)
+
+      trainset =
+        Enum.map(1..6, fn i ->
+          Example.new(%{q: "q-#{i}", a: "ok"}, input_keys: [:q])
+        end)
+
+      metric = fn _ex, %Dsxir.Prediction{fields: %{a: a}}, _t ->
+        if a == "ok", do: 1.0, else: 0.0
+      end
+
+      proposer = scripted_proposer_lm("1. only-instruction")
+
+      assert {:ok, %Program{} = compiled, %Stats{} = stats} =
+               Dsxir.context([lm: proposer], fn ->
+                 MIPROv2.compile(prog, trainset, metric,
+                   proposer_lm: proposer,
+                   sampler: Random,
+                   num_trials: 2,
+                   num_instruction_candidates: 1,
+                   num_demo_sets: 1,
+                   minibatch_size: 2,
+                   minibatch_full_eval_steps: 100,
+                   top_k_full_eval: 1,
+                   batch_size: 1,
+                   seed: 7
+                 )
+               end)
+
+      assert %Dsxir.Program.Source.RuntimeProgram{} = compiled.source
+      assert is_number(stats.best_score)
+    end
+
+    test "init_session/4 enumerates predictors through Source.predictors/1" do
+      Dsxir.Test.Fixtures.ScriptedLM.install_script(%{
+        answer: fn _ -> %{a: "ok"} end
+      })
+
+      rp = Dsxir.Test.Fixtures.RuntimePrograms.equivalent_to_qa()
+      prog = Program.from_runtime(rp)
+
+      trainset =
+        Enum.map(1..4, fn i ->
+          Example.new(%{q: "q-#{i}", a: "ok"}, input_keys: [:q])
+        end)
+
+      metric = fn _ex, _pred, _t -> 1.0 end
+      proposer = scripted_proposer_lm("1. only-instruction")
+
+      assert {:ok, _sampler, planned} =
+               Dsxir.context([lm: proposer], fn ->
+                 MIPROv2.init_session(prog, trainset, metric,
+                   proposer_lm: proposer,
+                   sampler: Random,
+                   num_trials: 2,
+                   num_instruction_candidates: 1,
+                   num_demo_sets: 1,
+                   minibatch_size: 2,
+                   minibatch_full_eval_steps: 100,
+                   top_k_full_eval: 1,
+                   batch_size: 1,
+                   seed: 7
+                 )
+               end)
+
+      assert planned == 2
+    end
+  end
 end

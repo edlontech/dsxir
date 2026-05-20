@@ -15,7 +15,7 @@ defmodule Dsxir.Optimizer.MIPROv2.Trial do
   call is reported as a miss so `lm_calls` reflects the true number of
   program executions and `cached_calls` stays at zero.
 
-  Examples whose `program.module.forward/2` raises score `0.0` and the batch
+  Examples whose program forward function raises score `0.0` and the batch
   continues. Worker exits (timeout, crash) likewise score `0.0` without
   aborting the trial.
   """
@@ -160,7 +160,7 @@ defmodule Dsxir.Optimizer.MIPROv2.Trial do
   end
 
   defp forward_program(program, example) do
-    {_prog, prediction} = program.module.forward(program, example.data)
+    {_prog, prediction} = Dsxir.Program.forward(program, example.data)
     {:ok, prediction}
   rescue
     e -> {:error, e}

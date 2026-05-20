@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+- `%Dsxir.RuntimeProgram{}` data shape with the `Dsxir.RuntimeProgram.from_map/2`
+  construction pipeline: parse, validate, run `program_plugs`, optionally
+  persist via a store.
+- `Dsxir.Program.Source` behaviour with `Dsxir.Program.Source.Module` (for
+  declared `use Dsxir.Module` programs) and `Dsxir.Program.Source.RuntimeProgram`
+  (for runtime-authored data).
+- v2 artifact format with on-load upgrade of v1 artifacts; canonical
+  SHA-256 content hash exposed as `%RuntimeProgram{}.version`.
+- Predicate DSL (`Dsxir.Predicate`) with a parser, type-checker, and
+  evaluator used as node guards in runtime programs.
+- `Dsxir.RuntimeProgram.Executor` — linear-time topological execution with
+  guard evaluation, skip cascading along `:required` edges, optional
+  `degraded` propagation, and an `on_skip:` policy (`:raise`,
+  `:tagged_tuple`, or `nil`).
+- `mix dsxir.check.no_eval` invariant guard against `Code.eval_string` /
+  `String.to_atom` in production code paths.
+- `Dsxir.Optimizer.BootstrapFewShot.compile/4` accepts runtime programs and
+  exposes a `degraded_demos:` option; every other optimizer and
+  `Dsxir.Evaluate` also accept runtime programs.
+- `Dsxir.RuntimeProgram.Store` behaviour with ETS and File implementations.
+- `Dsxir.Predicate.TypeChecker` treats `:integer` and `:float` as
+  compatible for comparison ops (e.g. `length(input.q) > 1.5`).
+
 ## [0.1.0](https://github.com/edlontech/dsxir/compare/dsxir-v0.0.1...dsxir-v0.1.0) (2026-05-13)
 
 

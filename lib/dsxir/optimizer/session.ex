@@ -411,10 +411,27 @@ defmodule Dsxir.OptimizerSession do
   defp resolve_resume_program(
          %Checkpoint{best_program_artifact: artifact, program_module: mod},
          opts
-       ) do
+       )
+       when is_atom(mod) and not is_nil(mod) do
     case Artifact.decode(mod, artifact) do
       {:ok, program} -> program
       _ -> Keyword.fetch!(opts, :program)
+    end
+  end
+
+  defp resolve_resume_program(
+         %Checkpoint{best_program_artifact: artifact, program_module: nil},
+         opts
+       ) do
+    Artifact.decode_and_hydrate(artifact)
+  rescue
+    _ -> Keyword.fetch!(opts, :program)
+  end
+
+  defp program_module_for(source) do
+    case Dsxir.Program.Source.identity(source) do
+      {:module, mod, _} -> mod
+      {:runtime, _id, _version} -> nil
     end
   end
 
@@ -470,7 +487,7 @@ defmodule Dsxir.OptimizerSession do
           session_id: session_id,
           optimizer: optimizer,
           program: program,
-          program_module: program.module,
+          program_module: program_module_for(program.source),
           trainset: trainset,
           trainset_hash: Checkpoint.hash_trainset(trainset),
           metric: metric,

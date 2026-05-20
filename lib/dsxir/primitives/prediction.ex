@@ -9,12 +9,13 @@ defmodule Dsxir.Prediction do
 
   @behaviour Access
 
-  defstruct fields: %{}, completions: [], lm_usage: nil
+  defstruct fields: %{}, completions: [], lm_usage: nil, skipped: nil
 
   @type t :: %__MODULE__{
           fields: map(),
           completions: [String.t()],
-          lm_usage: nil | map()
+          lm_usage: nil | map(),
+          skipped: nil | [atom()]
         }
 
   @spec new(map(), keyword()) :: t()
@@ -22,7 +23,8 @@ defmodule Dsxir.Prediction do
     %__MODULE__{
       fields: fields,
       completions: Keyword.get(opts, :completions, []),
-      lm_usage: Keyword.get(opts, :lm_usage)
+      lm_usage: Keyword.get(opts, :lm_usage),
+      skipped: Keyword.get(opts, :skipped)
     }
   end
 

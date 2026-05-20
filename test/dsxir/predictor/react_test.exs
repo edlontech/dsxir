@@ -95,12 +95,12 @@ defmodule Dsxir.Predictor.ReActTest do
               trace_name: :agent
             )
 
-          {%Dsxir.Program{module: QASig}, prediction}
+          {Dsxir.Program.new(Dsxir.Test.Fixtures.AnswerProgram), prediction}
         end)
       end)
 
     assert length(trace) == 2
-    assert Enum.all?(trace, &match?({:agent, _, _, _}, &1))
+    assert Enum.all?(trace, &match?(%Dsxir.Trace.Entry{predictor: :agent}, &1))
   end
 
   test "tool exceptions become observations, the loop continues" do

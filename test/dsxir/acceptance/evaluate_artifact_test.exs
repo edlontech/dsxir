@@ -11,7 +11,7 @@ defmodule Dsxir.Acceptance.EvaluateArtifactTest do
   use Mimic
 
   alias Dsxir.Artifact
-  alias Dsxir.Errors.Invalid.SignatureMismatch
+  alias Dsxir.Errors.Invalid.Configuration, as: InvalidConfiguration
   alias Dsxir.Errors.Invalid.Trainset
   alias Dsxir.Evaluate
   alias Dsxir.Optimizer.LabeledFewShot
@@ -99,7 +99,7 @@ defmodule Dsxir.Acceptance.EvaluateArtifactTest do
   end
 
   @tag :tmp_dir
-  test "4. hydrate into a different module raises SignatureMismatch with non-empty diff",
+  test "4. hydrate into a different module raises Invalid.Configuration with :module_mismatch",
        %{tmp_dir: tmp_dir} do
     {:ok, compiled, _} =
       LabeledFewShot.compile(Program.new(QA.Prog), QA.trainset_10(), &QA.exact_match/3, [])
@@ -107,8 +107,10 @@ defmodule Dsxir.Acceptance.EvaluateArtifactTest do
     path = Path.join(tmp_dir, "m3-mismatch-#{:erlang.unique_integer([:positive])}.json")
     {:ok, ^path} = Artifact.save(compiled, path)
 
-    {:error, %SignatureMismatch{diff: diff}} = Artifact.load(OtherProg, path)
-    assert diff.field_diffs != %{}
+    {:error, %InvalidConfiguration{key: :target_module, reason: :module_mismatch} = exc} =
+      Artifact.load(OtherProg, path)
+
+    assert exc.value == %{target: OtherProg, on_disk: QA.Prog}
   end
 
   test "5. empty trainset returns {:error, Invalid.Trainset{reason: :empty}}" do

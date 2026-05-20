@@ -57,6 +57,49 @@ defmodule Dsxir.Signature do
     end
   end
 
+  @doc """
+  Build a `Dsxir.Signature.Compiled` from an inline JSON-ish blob carrying a
+  list of `"fields"` and an optional `"instruction"`. Each field map carries
+  `"name"`, `"type"` (string in the same grammar as `from_string/2`), `"kind"`
+  (`"input"` or `"output"`), and an optional `"desc"`. Used by
+  `Dsxir.RuntimeProgram.from_map/2` when a runtime payload inlines its
+  signature rather than naming a module.
+
+  Reuses `from_string!/2` by reconstructing the equivalent `inputs -> outputs`
+  string from the blob's fields, then attaching `desc` and an `{:inline, blob}`
+  source tag.
+  """
+  @spec from_inline_blob(map()) :: Compiled.t()
+  def from_inline_blob(%{"fields" => fields} = blob) when is_list(fields) do
+    {inputs, outputs} =
+      Enum.split_with(fields, fn %{"kind" => k} -> k == "input" end)
+
+    source =
+      Enum.map_join(inputs, ", ", &inline_field_to_source/1) <>
+        " -> " <>
+        Enum.map_join(outputs, ", ", &inline_field_to_source/1)
+
+    compiled =
+      from_string!(source, instruction: Map.get(blob, "instruction"))
+
+    by_name = Map.new(fields, fn %{"name" => n} = f -> {n, f} end)
+
+    updated_fields =
+      Enum.map(compiled.fields, fn field ->
+        case Map.fetch(by_name, Atom.to_string(field.name)) do
+          {:ok, blob_field} -> %{field | desc: Map.get(blob_field, "desc")}
+          :error -> field
+        end
+      end)
+
+    %{compiled | fields: updated_fields, source: {:inline, blob}}
+  end
+
+  defp inline_field_to_source(%{"name" => name, "type" => type})
+       when is_binary(name) and is_binary(type) do
+    name <> ":" <> type
+  end
+
   defp apply_instruction(compiled, nil), do: compiled
   defp apply_instruction(compiled, instr), do: %{compiled | instruction: instr}
 end

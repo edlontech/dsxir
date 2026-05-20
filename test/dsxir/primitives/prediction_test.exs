@@ -38,4 +38,13 @@ defmodule Dsxir.PredictionTest do
     assert Access.fetch(pred, :nonexistent) == :error
     assert pred[:nonexistent] == nil
   end
+
+  test "default skipped is nil" do
+    assert %Dsxir.Prediction{skipped: nil} = Dsxir.Prediction.new(%{})
+  end
+
+  test "new/2 accepts :skipped opt" do
+    pred = Dsxir.Prediction.new(%{x: 1}, skipped: [:y, :z])
+    assert %Dsxir.Prediction{skipped: [:y, :z]} = pred
+  end
 end

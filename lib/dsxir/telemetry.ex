@@ -21,12 +21,15 @@ defmodule Dsxir.Telemetry do
       [:dsxir, :optimizer, :stop]
       [:dsxir, :optimizer, :trial]
       [:dsxir, :optimizer, :item_error]
+      [:dsxir, :optimizer, :insufficient_demos]
 
       [:dsxir, :miprov2, :proposer]
       [:dsxir, :miprov2, :rerank]
 
       [:dsxir, :evaluate, :item]
       [:dsxir, :evaluate, :stop]
+
+      [:dsxir, :runtime_program, :skipped]
 
   ## Always-present keys
 
@@ -70,8 +73,32 @@ defmodule Dsxir.Telemetry do
       example_index: non_neg_integer(), error: Exception.t(),
       error_class: atom()}`.
 
+  `[:dsxir, :optimizer, :insufficient_demos]`
+
+    * **Measurements:** `%{requested: non_neg_integer(), got: non_neg_integer()}`.
+    * **Metadata:** `%{predictor: atom(), requested: non_neg_integer(),
+      got: non_neg_integer(), reached_examples: non_neg_integer(),
+      total_examples: non_neg_integer(), degraded_excluded: boolean()}`.
+
+  Emitted once per predictor whose final bootstrapped pool has fewer than
+  `max_bootstrapped_demos` entries. Never raises; subscribers may use the event
+  to surface trainset-coverage gaps without aborting compilation.
+
   Subscribers branch on `nil` for `score` and `error_class`; never on
   `Map.has_key?/2`.
+
+  ## Runtime-program events
+
+  `[:dsxir, :runtime_program, :skipped]`
+
+    * **Measurements:** `%{}`.
+    * **Metadata:** `%{node: atom(), reason: :guard_false | :upstream_required_skipped,
+      program_id: term(), program_version: term()}`.
+
+  Emitted by the runtime-program executor each time a graph node is skipped,
+  either because a declared guard returned `false` or because an upstream
+  required-input dependency was itself skipped. Documented here; produced by
+  the executor.
   """
 
   @predictor_start [:dsxir, :predictor, :start]

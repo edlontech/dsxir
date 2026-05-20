@@ -196,4 +196,27 @@ defmodule Dsxir.EvaluateTest do
     lines = File.read!(path) |> String.split("\n", trim: true)
     assert length(lines) == 3
   end
+
+  test "run/2 dispatches a runtime-program through Program.forward/2 without crashing" do
+    Mimic.stub(Dsxir.LM.Sycophant, :generate_text, fn _c, _msgs, _opts ->
+      {:ok, "[[ ## answer ## ]]\nok", Dsxir.LM.empty_usage()}
+    end)
+
+    rp = Dsxir.Test.Fixtures.RuntimePrograms.linear_chain_live()
+    prog = Dsxir.Program.from_runtime(rp)
+
+    devset =
+      Enum.map(1..3, fn i ->
+        Dsxir.Example.new(%{question: "q-#{i}", answer: "ok"}, input_keys: [:question])
+      end)
+
+    runtime_metric = fn _ex, %Dsxir.Prediction{fields: %{answer: a}}, _t ->
+      if a == "ok", do: 1.0, else: 0.0
+    end
+
+    Dsxir.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
+      ev = %Evaluate{devset: devset, metric: runtime_metric, num_threads: 1}
+      assert %EvaluationResult{score: 100.0, errors: %{count: 0}} = Evaluate.run(ev, prog)
+    end)
+  end
 end

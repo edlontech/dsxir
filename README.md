@@ -175,6 +175,59 @@ are always present on `[:dsxir, :predictor, :stop]`; their value is
 `nil` when the upstream LM did not report usage. See `Dsxir.Telemetry`
 for the full event list.
 
+## Runtime programs
+
+Programs may be authored at runtime as plain data instead of declared with
+`use Dsxir.Module`. `Dsxir.RuntimeProgram.from_map/2` parses a JSON-ish
+payload, validates it (predictor impls, signatures, edge wiring, DAG
+acyclicity, predicate guards, edge types), runs `program_plugs`, and
+optionally persists the result via a configured store.
+
+```elixir
+payload = %{
+  "id" => "qa/v1",
+  "inputs" => [%{"name" => "question", "type" => "str"}],
+  "outputs" => [%{"name" => "answer", "type" => "str"}],
+  "nodes" => [
+    %{
+      "name" => "qa",
+      "impl" => "Elixir.Dsxir.Predictor.Predict",
+      "signature" => "Elixir.MyApp.AnswerQuestion"
+    }
+  ],
+  "edges" => [
+    %{"from" => ["program_input", "question"], "to" => ["node", "qa", "question"]},
+    %{"from" => ["node", "qa", "answer"], "to" => ["program_output", "answer"]}
+  ]
+}
+
+{:ok, rp} =
+  Dsxir.RuntimeProgram.from_map(
+    payload,
+    store: {Dsxir.RuntimeProgram.Store.ETS, :my_runtime_program_table}
+  )
+
+prog = Dsxir.Program.from_runtime(rp)
+{_prog, %Dsxir.Prediction{fields: %{answer: a}}} =
+  Dsxir.Program.forward(prog, %{question: "Capital of France?"})
+```
+
+The executor walks the DAG in topological order. Nodes may carry a
+`guard_source` (the Predicate DSL — e.g. `"length(input.question) > 0 and
+qa.answer != \"\""`) that, on `false`, skips the node. Skips cascade along
+`:required` edges; downstream nodes whose missing input is `:optional` are
+marked `degraded`. The `on_skip` opt of `Dsxir.RuntimeProgram.Executor`
+selects between `:raise` (default), `:tagged_tuple` (returns
+`{:partial, prediction}`), or `nil` (returns a `%Prediction{skipped: [...]}`
+with nil-valued fields).
+
+All optimizers (`Dsxir.Optimizer.BootstrapFewShot`, `LabeledFewShot`,
+`KNNFewShot`, `MIPROv2`) and `Dsxir.Evaluate` accept runtime programs
+transparently. `BootstrapFewShot` honors a `degraded_demos:` opt
+(`:exclude` by default) that drops demos collected from skipped chains.
+The `mix dsxir.check.no_eval` mix task enforces that no production code
+can `Code.eval_string`/`String.to_atom` runtime payloads.
+
 ## Tutorials
 
 - [Email Information Extraction](guides/tutorials/email_extraction.livemd)

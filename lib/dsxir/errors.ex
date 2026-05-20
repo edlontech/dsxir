@@ -2,12 +2,13 @@ defmodule Dsxir.Errors do
   @moduledoc """
   Splode aggregator for dsxir-originated errors.
 
-  Six classes, ordered by precedence (first non-empty class wins on aggregation):
+  Seven classes, ordered by precedence (first non-empty class wins on aggregation):
 
     * `:halted` - explicit policy halts (e.g. `call_plugs` returning `{:halt, _}`).
     * `:invalid` - configuration / input / signature shape problems.
     * `:adapter` - parse, validation, and fallback exhaustion errors.
     * `:lm` - upstream LM transport / quota / context-window errors.
+    * `:runtime` - runtime-program executor errors (skipped outputs, predicate failure).
     * `:framework` - dsxir internal bugs surfaced as typed errors.
     * `:unknown` - Splode fallback when an error cannot be classified.
 
@@ -21,6 +22,7 @@ defmodule Dsxir.Errors do
       invalid: Dsxir.Errors.Invalid,
       adapter: Dsxir.Errors.Adapter,
       lm: Dsxir.Errors.LM,
+      runtime: Dsxir.Errors.Runtime,
       framework: Dsxir.Errors.Framework,
       unknown: Dsxir.Errors.Unknown
     ],

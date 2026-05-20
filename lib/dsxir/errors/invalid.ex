@@ -22,7 +22,12 @@ defmodule Dsxir.Errors.Invalid.Signature do
 end
 
 defmodule Dsxir.Errors.Invalid.Module do
-  @moduledoc "Raised when a `Dsxir.Module` predicate dispatches to an undeclared predictor name."
+  @moduledoc """
+  Raised when a program dispatches to an undeclared predictor name, or when a
+  non-`Dsxir.Module` is supplied. The `:module` field carries either the
+  static module atom (for `Dsxir.Program.Source.Module`) or the runtime
+  program id binary (for `Dsxir.Program.Source.RuntimeProgram`).
+  """
   use Splode.Error, fields: [:module, :predictor, :reason], class: :invalid
 
   def message(%{module: module, predictor: predictor, reason: reason}) do
@@ -100,4 +105,36 @@ defmodule Dsxir.Errors.Invalid.ResumeMismatch do
   def message(%{session_id: id, reason: reason, expected: e, got: g}) do
     "resume mismatch for session #{inspect(id)}: reason=#{inspect(reason)} expected=#{inspect(e)} got=#{inspect(g)}"
   end
+end
+
+defmodule Dsxir.Errors.Invalid.RuntimeProgram do
+  @moduledoc """
+  Raised by `Dsxir.RuntimeProgram.from_map/2` on structural malformation that
+  prevents parsing (e.g. `nodes` is not a list, an edge endpoint tuple is the
+  wrong shape). Semantic validation lives in `Dsxir.RuntimeProgram.Validator`
+  and produces the same error shape.
+
+  `errors:` is a list of maps with keys `:path`, `:code`, `:message`, and
+  `:suggestion`.
+  """
+  use Splode.Error, fields: [:errors], class: :invalid
+
+  @type entry :: %{
+          path: [atom() | String.t() | non_neg_integer()],
+          code: atom(),
+          message: String.t(),
+          suggestion: nil | String.t()
+        }
+
+  @type t :: %__MODULE__{errors: [entry()]}
+
+  def message(%{errors: errors}) do
+    "runtime program validation failed (#{length(errors)} error(s)):\n" <>
+      Enum.map_join(errors, "\n", fn e ->
+        "  - [#{e.code}] at #{format_path(Map.get(e, :path, []))}: #{Map.get(e, :message, "")}"
+      end)
+  end
+
+  defp format_path([]), do: "(root)"
+  defp format_path(parts), do: Enum.map_join(parts, "/", &to_string/1)
 end

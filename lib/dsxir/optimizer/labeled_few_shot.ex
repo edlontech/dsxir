@@ -44,7 +44,6 @@ defmodule Dsxir.Optimizer.LabeledFewShot do
   @behaviour Dsxir.Optimizer
 
   alias Dsxir.Errors
-  alias Dsxir.Module.Info, as: ModuleInfo
   alias Dsxir.Program
   alias Dsxir.Signature.Runtime, as: SignatureRuntime
 
@@ -103,9 +102,9 @@ defmodule Dsxir.Optimizer.LabeledFewShot do
 
   defp pick(trainset, max, false), do: Enum.take_random(trainset, max)
 
-  defp slot_demos_for_all(%Program{module: user_module, predictors: predictors} = prog, demos) do
+  defp slot_demos_for_all(%Program{source: source, predictors: predictors} = prog, demos) do
     wrapped = Enum.map(demos, &Dsxir.Demo.labeled/1)
-    decls = ModuleInfo.module(user_module)
+    decls = Dsxir.Program.Source.predictors(source)
 
     updated =
       Map.new(predictors, fn {name, %Program.State{} = state} ->

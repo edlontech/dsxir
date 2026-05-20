@@ -19,6 +19,10 @@ defmodule Dsxir.OptimizerSessionTest do
   defp dummy_program, do: Dsxir.Program.new(AnswerProgram)
   defp dummy_metric, do: fn _ex, _pred, _trace -> 0.0 end
 
+  defp runtime_program do
+    Dsxir.Program.from_runtime(Dsxir.Test.Fixtures.RuntimePrograms.linear_chain())
+  end
+
   test "compile/5 runs scripted trials and returns the best program" do
     scores = [0.6, 0.85, 0.7, 0.9, 0.55]
 
@@ -204,5 +208,32 @@ defmodule Dsxir.OptimizerSessionTest do
     assert length(inner.errors) >= 2
     assert Enum.all?(inner.errors, &match?(%RuntimeError{}, &1))
     assert Enum.all?(inner.errors, &(&1.message =~ "scripted error"))
+  end
+
+  test "compile/5 over a runtime-program source stores program_module: nil and succeeds" do
+    {:ok, _prog, _stats} =
+      OptimizerSession.compile(
+        MimicOptimizer,
+        runtime_program(),
+        [%{x: 1}],
+        dummy_metric(),
+        scripted_scores: [0.4, 0.7]
+      )
+  end
+
+  test "fresh session over a runtime program produces a checkpoint with program_module: nil" do
+    {:ok, pid} =
+      OptimizerSession.start_link(
+        optimizer: MimicOptimizer,
+        program: runtime_program(),
+        trainset: [%{x: 1}],
+        metric: dummy_metric(),
+        opts: [scripted_scores: [0.5, 0.6]],
+        session_id: "sess_runtime_test"
+      )
+
+    {:ok, _} = OptimizerSession.await(pid, 5000)
+    {:ok, cp} = Dsxir.OptimizerSession.Store.ETS.get_checkpoint([], "sess_runtime_test")
+    assert cp.program_module == nil
   end
 end

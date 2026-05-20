@@ -140,7 +140,7 @@ defmodule Dsxir.Evaluate do
     inputs = Dsxir.Example.inputs(example)
 
     try do
-      {_prog, prediction} = program.module.forward(program, inputs)
+      {_prog, prediction} = Dsxir.Program.forward(program, inputs)
       metric = Dsxir.Metric.apply(ev.metric, example, prediction, nil)
       EvaluationResult.ok_row(example, prediction, metric)
     rescue

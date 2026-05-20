@@ -19,9 +19,9 @@ defmodule Dsxir.Module.Runtime do
   """
 
   alias Dsxir.CallContext
-  alias Dsxir.Module.Info
-  alias Dsxir.Module.PredictorDecl
   alias Dsxir.Program
+  alias Dsxir.Program.PredictorDecl
+  alias Dsxir.Program.Source
   alias Dsxir.Settings
 
   require Logger
@@ -33,11 +33,11 @@ defmodule Dsxir.Module.Runtime do
   """
   @spec call(Program.t(), atom(), map() | keyword(), keyword()) ::
           {Program.t(), Dsxir.Prediction.t()}
-  def call(%Program{module: user_module} = prog, name, inputs, opts \\ [])
+  def call(%Program{source: source} = prog, name, inputs, opts \\ [])
       when is_atom(name) do
     inputs_map = if is_list(inputs), do: Map.new(inputs), else: inputs
 
-    case find_decl(user_module, name) do
+    case find_decl(source, name) do
       %PredictorDecl{impl: impl, signature: signature} ->
         state = Program.get_state(prog, name)
         parent_path = Keyword.get(opts, :path, [])
@@ -59,16 +59,32 @@ defmodule Dsxir.Module.Runtime do
         demos_for_call = resolve_demos(state, inputs_map, name)
         state_for_call = %{state | demos: demos_for_call}
         {new_state, prediction} = impl.forward(state_for_call, signature, inputs_map, merged_opts)
-        Dsxir.Trace.record({name, inputs_map, prediction, demos_for_call})
+        degraded? = validate_degraded_opt(Keyword.get(opts, :degraded, false))
+
+        Dsxir.Trace.record(%Dsxir.Trace.Entry{
+          predictor: name,
+          inputs: inputs_map,
+          prediction: prediction,
+          demos: demos_for_call,
+          degraded: degraded?
+        })
+
         {Program.put_state(prog, name, new_state), prediction}
 
       nil ->
         raise %Dsxir.Errors.Invalid.Module{
-          module: user_module,
+          module: Program.identity_for_error(source),
           predictor: name,
           reason: :undeclared_predictor
         }
     end
+  end
+
+  defp validate_degraded_opt(value) when is_boolean(value), do: value
+
+  defp validate_degraded_opt(other) do
+    raise ArgumentError,
+          "expected :degraded opt to be a boolean, got: #{inspect(other)}"
   end
 
   defp run_plugs([], _ctx), do: :ok
@@ -91,8 +107,8 @@ defmodule Dsxir.Module.Runtime do
     }
   end
 
-  defp find_decl(user_module, name) do
-    Info.module(user_module) |> Enum.find(&(&1.name == name))
+  defp find_decl(source, name) do
+    source |> Source.predictors() |> Enum.find(&(&1.name == name))
   end
 
   defp per_call_opts_from_settings do

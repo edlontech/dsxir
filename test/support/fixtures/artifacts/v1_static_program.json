@@ -1,0 +1,14 @@
+{
+  "answer": {
+    "instructions": "Answer briefly.",
+    "demos": [
+      {"q": "q1", "a": "a1", "_kind": "labeled"},
+      {"q": "q2", "a": "a2", "_kind": "labeled"}
+    ]
+  },
+  "_metadata": {
+    "compiled_with": null,
+    "score": null,
+    "trainset_hash": null
+  }
+}

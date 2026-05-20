@@ -83,6 +83,25 @@ defmodule Dsxir.Optimizer.BootstrapFewShotSessionTest do
              BootstrapFewShot.init_session(Program.new(QA.Prog), [], &threshold_metric/3, [])
   end
 
+  test "init_session/4 over a runtime-program source enumerates predictors via Source.predictors/1" do
+    rp = Dsxir.Test.Fixtures.RuntimePrograms.equivalent_to_qa()
+    prog = Program.from_runtime(rp)
+
+    trainset =
+      Enum.map(1..3, fn i ->
+        Dsxir.Example.new(%{q: "q#{i}", a: "a#{i}"}, input_keys: [:q])
+      end)
+
+    assert {:ok, %Sampler{} = sampler, _planned} =
+             BootstrapFewShot.init_session(prog, trainset, &threshold_metric/3, common_opts())
+
+    assert sampler.predictor_decls != nil
+
+    assert Enum.any?(sampler.predictor_decls, fn d ->
+             match?(%Dsxir.Program.PredictorDecl{name: :answer}, d)
+           end)
+  end
+
   test "serialize_state/1 + deserialize_state/2 round-trip" do
     scripted_lm(fn _ -> "good-x" end)
 

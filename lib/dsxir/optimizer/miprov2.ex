@@ -65,7 +65,6 @@ defmodule Dsxir.Optimizer.MIPROv2 do
   @behaviour Dsxir.Optimizer
 
   alias Dsxir.Errors
-  alias Dsxir.Module.Info, as: ModuleInfo
   alias Dsxir.Optimizer.BootstrapFewShot
   alias Dsxir.Optimizer.Cache
   alias Dsxir.Optimizer.LabeledFewShot
@@ -172,12 +171,12 @@ defmodule Dsxir.Optimizer.MIPROv2 do
     {trainsplit, valset} = split_trainset(trainset, cfg.seed, cfg.valset_fraction)
     minibatch_size = effective_minibatch(valset, cfg.minibatch_size)
 
-    decls = ModuleInfo.module(student.module)
+    decls = Dsxir.Program.Source.predictors(student.source)
     current_instructions = current_instructions(student, decls)
     demo_bundles = bootstrap_demos(student, trainsplit, metric, cfg, decls)
 
     {program_summary, dataset_summary, proposer_calls_summary, summary_degraded} =
-      summarize(student.module, trainsplit, proposer_lm)
+      summarize(decls, trainsplit, proposer_lm)
 
     {proposed_instructions, proposer_calls_inst, proposer_degraded} =
       propose_instructions(decls, program_summary, dataset_summary, cfg, proposer_lm)
@@ -348,16 +347,16 @@ defmodule Dsxir.Optimizer.MIPROv2 do
       student
   end
 
-  defp summarize(user_module, trainset, proposer_lm) do
-    {program_summary, p_calls_p, p_degraded} = run_program_summary(user_module, proposer_lm)
+  defp summarize(decls, trainset, proposer_lm) do
+    {program_summary, p_calls_p, p_degraded} = run_program_summary(decls, proposer_lm)
 
     {dataset_summary, p_calls_d, d_degraded} = run_dataset_summary(trainset, proposer_lm)
 
     {program_summary, dataset_summary, p_calls_p + p_calls_d, p_degraded or d_degraded}
   end
 
-  defp run_program_summary(user_module, {_mod, _cfg} = lm) do
-    case safe_call(fn -> ProgramSummarizer.run(user_module, lm) end) do
+  defp run_program_summary(decls, {_mod, _cfg} = lm) do
+    case safe_call(fn -> ProgramSummarizer.run(decls, lm) end) do
       {:ok, summary} ->
         emit_proposer(:program_summary, :ok)
         {summary, 1, false}
@@ -368,7 +367,7 @@ defmodule Dsxir.Optimizer.MIPROv2 do
     end
   end
 
-  defp run_program_summary(_user_module, _other), do: {"", 0, true}
+  defp run_program_summary(_decls, _other), do: {"", 0, true}
 
   defp run_dataset_summary(trainset, {_mod, _cfg} = lm) do
     case safe_call(fn -> DatasetSummarizer.run(trainset, lm, sample_size: 5) end) do
@@ -624,12 +623,12 @@ defmodule Dsxir.Optimizer.MIPROv2 do
     {trainsplit, valset} = split_trainset(trainset, cfg.seed, cfg.valset_fraction)
     minibatch_size = effective_minibatch(valset, cfg.minibatch_size)
 
-    decls = ModuleInfo.module(student.module)
+    decls = Dsxir.Program.Source.predictors(student.source)
     current_instructions = current_instructions(student, decls)
     demo_bundles = bootstrap_demos(student, trainsplit, metric, cfg, decls)
 
     {program_summary, dataset_summary, proposer_calls_summary, summary_degraded} =
-      summarize(student.module, trainsplit, proposer_lm)
+      summarize(decls, trainsplit, proposer_lm)
 
     {proposed_instructions, proposer_calls_inst, proposer_degraded} =
       propose_instructions(decls, program_summary, dataset_summary, cfg, proposer_lm)

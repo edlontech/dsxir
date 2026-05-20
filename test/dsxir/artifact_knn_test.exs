@@ -46,7 +46,7 @@ defmodule Dsxir.ArtifactKnnTest do
 
   defp prog_with_strategy(strategy) do
     %Program{
-      module: Prog,
+      source: Dsxir.Program.Source.Module.new!(Prog),
       predictors: %{qa: %Program.State{demos: [], demo_strategy: strategy}}
     }
   end
@@ -118,7 +118,7 @@ defmodule Dsxir.ArtifactKnnTest do
 
     raw = File.read!(path)
     decoded = Jason.decode!(raw)
-    assert decoded["qa"]["demo_strategy"]["embed_fields"] == ["question"]
+    assert decoded["predictors"]["qa"]["demo_strategy"]["embed_fields"] == ["question"]
 
     {:ok, loaded} = Artifact.load(Prog, path)
     state = Program.get_state(loaded, :qa)

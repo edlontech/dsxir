@@ -29,10 +29,11 @@ defmodule Dsxir.ArtifactSaveTest do
   test "encodes uncompiled program with empty demos and signature instructions" do
     encoded = Artifact.encode(Program.new(Prog))
 
-    assert %{"answer" => %{"instructions" => instr, "demos" => []}} = encoded
+    assert %{"format_version" => "2", "source_kind" => "module"} = encoded
+    assert %{"predictors" => %{"answer" => %{"instructions" => instr, "demos" => []}}} = encoded
     assert is_binary(instr) or is_nil(instr)
 
-    assert encoded["_metadata"] == %{
+    assert encoded["metadata"] == %{
              "compiled_with" => nil,
              "score" => nil,
              "trainset_hash" => nil
@@ -46,39 +47,44 @@ defmodule Dsxir.ArtifactSaveTest do
       LabeledFewShot.compile(Program.new(Prog), trainset, fn _, _, _ -> 1.0 end, [])
 
     encoded = Artifact.encode(compiled)
+    answer_block = encoded["predictors"]["answer"]
 
-    assert length(encoded["answer"]["demos"]) == 3
+    assert length(answer_block["demos"]) == 3
 
-    Enum.each(encoded["answer"]["demos"], fn demo ->
+    Enum.each(answer_block["demos"], fn demo ->
       assert is_binary(demo["q"])
       assert is_binary(demo["a"])
       assert demo["_kind"] == "labeled"
     end)
 
-    assert encoded["_metadata"]["compiled_with"] == "Elixir.Dsxir.Optimizer.LabeledFewShot"
-    assert is_binary(encoded["_metadata"]["trainset_hash"])
+    assert encoded["metadata"]["compiled_with"] == "Elixir.Dsxir.Optimizer.LabeledFewShot"
+    assert is_binary(encoded["metadata"]["trainset_hash"])
   end
 
   test "encodes %Dsxir.Demo{kind: :bootstrapped} demos with _kind => bootstrapped" do
     demo = Dsxir.Demo.bootstrapped(ex("q1", "a1"), %{round: 1, example_index: 0})
 
     prog = %Program{
-      module: Prog,
+      source: Dsxir.Program.Source.Module.new!(Prog),
       predictors: %{answer: %Program.State{demos: [demo]}}
     }
 
     encoded = Artifact.encode(prog)
-    assert [%{"q" => "q1", "a" => "a1", "_kind" => "bootstrapped"}] = encoded["answer"]["demos"]
+
+    assert [%{"q" => "q1", "a" => "a1", "_kind" => "bootstrapped"}] =
+             encoded["predictors"]["answer"]["demos"]
   end
 
   test "encodes bare %Dsxir.Example{} demos with _kind => labeled" do
     prog = %Program{
-      module: Prog,
+      source: Dsxir.Program.Source.Module.new!(Prog),
       predictors: %{answer: %Program.State{demos: [ex("q1", "a1")]}}
     }
 
     encoded = Artifact.encode(prog)
-    assert [%{"q" => "q1", "a" => "a1", "_kind" => "labeled"}] = encoded["answer"]["demos"]
+
+    assert [%{"q" => "q1", "a" => "a1", "_kind" => "labeled"}] =
+             encoded["predictors"]["answer"]["demos"]
   end
 
   @tag :tmp_dir
@@ -93,14 +99,16 @@ defmodule Dsxir.ArtifactSaveTest do
     assert String.contains?(raw, "\n  ")
 
     decoded = Jason.decode!(raw)
-    assert Map.has_key?(decoded, "answer")
-    assert Map.has_key?(decoded, "_metadata")
+    assert decoded["format_version"] == "2"
+    assert decoded["source_kind"] == "module"
+    assert Map.has_key?(decoded["predictors"], "answer")
+    assert Map.has_key?(decoded, "metadata")
   end
 
   @tag :tmp_dir
   test "save!/2 raises on encode failure", %{tmp_dir: tmp_dir} do
     bad = %Program{
-      module: Prog,
+      source: Dsxir.Program.Source.Module.new!(Prog),
       predictors: %{answer: %Program.State{demos: [Dsxir.Example.new(%{q: self(), a: "x"})]}}
     }
 
@@ -120,7 +128,7 @@ defmodule Dsxir.ArtifactSaveTest do
     }
 
     prog = %Program{
-      module: Prog,
+      source: Dsxir.Program.Source.Module.new!(Prog),
       metadata: %{
         compiled_with: Dsxir.Optimizer.MIPROv2,
         score: 0.75,
@@ -130,7 +138,7 @@ defmodule Dsxir.ArtifactSaveTest do
     }
 
     encoded = Artifact.encode(prog)
-    md = encoded["_metadata"]
+    md = encoded["metadata"]
 
     assert md["compiled_with"] == "Elixir.Dsxir.Optimizer.MIPROv2"
     assert md["score"] == 0.75
@@ -147,12 +155,12 @@ defmodule Dsxir.ArtifactSaveTest do
 
   test "encode_demo accepts raw map demos without crashing" do
     prog = %Program{
-      module: Prog,
+      source: Dsxir.Program.Source.Module.new!(Prog),
       predictors: %{answer: %Program.State{demos: [%{q: "q1", a: "a1"}]}}
     }
 
     encoded = Artifact.encode(prog)
 
-    assert [%{"q" => "q1", "a" => "a1"}] = encoded["answer"]["demos"]
+    assert [%{"q" => "q1", "a" => "a1"}] = encoded["predictors"]["answer"]["demos"]
   end
 end

@@ -38,7 +38,6 @@ defmodule Dsxir.Optimizer.KNNFewShot do
   alias Dsxir.DemoStrategy.KNN
   alias Dsxir.DemoStrategy.KNN.Entry
   alias Dsxir.Errors
-  alias Dsxir.Module.Info, as: ModuleInfo
   alias Dsxir.Program
   alias Dsxir.Retrieval.Embedder
   alias Dsxir.Settings
@@ -61,7 +60,7 @@ defmodule Dsxir.Optimizer.KNNFewShot do
            resolve_embedder(Keyword.get(opts, :embedder)),
          {:ok, embedder_id} <- validate_embedder_id(raw_config),
          embed_fields <- Keyword.get(opts, :embed_fields, :all),
-         decls <- ModuleInfo.module(student.module),
+         decls <- Dsxir.Program.Source.predictors(student.source),
          {:ok, per_predictor_entries, total_tokens} <-
            build_indices(decls, trainset, embedder_tuple, embed_fields) do
       stripped_config = KNN.strip_credentials(raw_config)

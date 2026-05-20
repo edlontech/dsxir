@@ -15,7 +15,7 @@ defmodule Dsxir.ProgramTest do
 
   test "new/1 reads predictor names from a Dsxir.Module-built module" do
     prog = Dsxir.Program.new(SamplePipeline)
-    assert prog.module == SamplePipeline
+    assert %Dsxir.Program.Source.Module{module: SamplePipeline} = prog.source
     assert Map.keys(prog.predictors) |> Enum.sort() == [:extract, :summarise]
     assert prog.predictors.extract == %Dsxir.Program.State{}
   end
@@ -35,9 +35,17 @@ defmodule Dsxir.ProgramTest do
            } = err
   end
 
-  test "new/2 accepts an explicit predictor-name list (no Dsxir.Module needed)" do
-    prog = Dsxir.Program.new(NotADsxirModule, [:only])
+  test "new/2 accepts an explicit predictor-name list for a Dsxir.Module" do
+    prog = Dsxir.Program.new(SamplePipeline, [:only])
     assert Map.keys(prog.predictors) == [:only]
+    assert %Dsxir.Program.Source.Module{module: SamplePipeline} = prog.source
+  end
+
+  test "new/2 also accepts a pre-built source struct" do
+    src = Dsxir.Program.Source.Module.new!(SamplePipeline)
+    prog = Dsxir.Program.new(src, [:only])
+    assert Map.keys(prog.predictors) == [:only]
+    assert prog.source == src
   end
 
   test "get_state/2 returns the per-predictor State" do
@@ -67,5 +75,43 @@ defmodule Dsxir.ProgramTest do
     updated = Dsxir.Program.put_state(prog, :extract, %Dsxir.Program.State{demos: [:a, :b]})
     assert Dsxir.Program.get_state(updated, :extract).demos == [:a, :b]
     assert Dsxir.Program.get_state(updated, :summarise) == %Dsxir.Program.State{}
+  end
+
+  test "identity_module/1 returns the module for static sources" do
+    src = Dsxir.Program.Source.Module.new!(SamplePipeline)
+    assert SamplePipeline = Dsxir.Program.identity_module(src)
+  end
+
+  test "identity_module/1 raises for runtime sources" do
+    rp = Dsxir.Test.Fixtures.RuntimePrograms.linear_chain()
+    src = %Dsxir.Program.Source.RuntimeProgram{runtime_program: rp}
+
+    err =
+      try do
+        Dsxir.Program.identity_module(src)
+      rescue
+        e -> e
+      end
+
+    assert %Dsxir.Errors.Invalid.Configuration{key: :identity_module, reason: :runtime_source} =
+             err
+  end
+
+  test "get_state/2 on a runtime source reports the program id in :module" do
+    rp = Dsxir.Test.Fixtures.RuntimePrograms.linear_chain()
+    prog = Dsxir.Program.from_runtime(rp)
+
+    err =
+      try do
+        Dsxir.Program.get_state(prog, :nonexistent)
+      rescue
+        e in Dsxir.Errors.Invalid.Module -> e
+      end
+
+    assert %Dsxir.Errors.Invalid.Module{
+             module: "test/linear_chain",
+             predictor: :nonexistent,
+             reason: :unknown_predictor
+           } = err
   end
 end

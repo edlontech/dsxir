@@ -48,11 +48,13 @@ defmodule Dsxir.MixProject do
       main: "Dsxir",
       extras: [
         "README.md",
+        "guides/runtime_programs.md",
         "guides/tutorials/email_extraction.livemd",
         "guides/tutorials/knn_few_shot.livemd",
         "guides/tutorials/miprov2.livemd"
       ],
       groups_for_extras: [
+        Guides: ~r"guides/[^/]+\.md",
         Tutorials: ~r"guides/tutorials/.?"
       ],
       groups_for_modules: [
@@ -142,7 +144,8 @@ defmodule Dsxir.MixProject do
 
   defp dialyzer do
     [
-      plt_add_apps: [:mix]
+      plt_add_apps: [:mix],
+      ignore_warnings: ".dialyzer_ignore.exs"
     ]
   end
 
@@ -158,7 +161,9 @@ defmodule Dsxir.MixProject do
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:mimic, "~> 2.0", only: :test},
       {:mix_audit, ">= 0.0.0", only: [:dev, :test], runtime: false},
+      {:nimble_parsec, "~> 1.4"},
       {:quiver, "~> 0.2"},
+      {:stream_data, "~> 1.1", only: :test},
       {:recode, "~> 0.8", only: [:dev], runtime: false},
       {:spark, "~> 2.7"},
       {:sycophant, "~> 0.4"},

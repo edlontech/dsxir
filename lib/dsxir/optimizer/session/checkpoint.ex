@@ -64,7 +64,7 @@ defmodule Dsxir.OptimizerSession.Checkpoint do
           optimizer: module(),
           optimizer_opts: keyword(),
           trainset_hash: binary(),
-          program_module: module(),
+          program_module: module() | nil,
           created_at: DateTime.t(),
           updated_at: DateTime.t(),
           progress: progress(),

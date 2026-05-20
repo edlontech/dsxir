@@ -144,4 +144,27 @@ defmodule Dsxir.Optimizer.LabeledFewShotTest do
     assert is_binary(compiled.metadata.trainset_hash)
     assert byte_size(compiled.metadata.trainset_hash) == 64
   end
+
+  test "compile/4 over a runtime-program source slots demos via Source.predictors/1" do
+    rp = Dsxir.Test.Fixtures.RuntimePrograms.linear_chain()
+    prog = Program.from_runtime(rp)
+
+    trainset =
+      Enum.map(1..3, fn i ->
+        Dsxir.Example.new(%{question: "q#{i}", answer: "a#{i}"}, input_keys: [:question])
+      end)
+
+    {:ok, compiled, stats} =
+      LabeledFewShot.compile(prog, trainset, &metric/3, max_labeled_demos: 3)
+
+    assert stats.labeled_demos == 3
+    assert stats.predictor_count == 2
+
+    step1 = Program.get_state(compiled, :step1)
+    step2 = Program.get_state(compiled, :step2)
+
+    assert length(step1.demos) == 3
+    assert length(step2.demos) == 3
+    assert Enum.all?(step1.demos, &match?(%Dsxir.Demo{kind: :labeled}, &1))
+  end
 end

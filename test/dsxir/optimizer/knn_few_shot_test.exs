@@ -156,4 +156,28 @@ defmodule Dsxir.Optimizer.KNNFewShotTest do
     refute Keyword.has_key?(stored_config, :api_key)
     assert Keyword.get(stored_config, :model) == "explicit-embed"
   end
+
+  test "compile/4 over a runtime-program source enumerates predictors via Source.predictors/1" do
+    expect(Dsxir.LM.Sycophant, :embed, fn _cfg, _texts, _opts ->
+      {:ok, [[1.0, 0.0], [0.0, 1.0], [0.5, 0.5]], %{tokens_in: 3, tokens_out: nil, cost: nil}}
+    end)
+
+    rp = Dsxir.Test.Fixtures.RuntimePrograms.equivalent_to_qa()
+    prog = Program.from_runtime(rp)
+
+    trainset = [
+      %Dsxir.Example{data: %{q: "what is x?", a: "x is x"}},
+      %Dsxir.Example{data: %{q: "what is y?", a: "y is y"}},
+      %Dsxir.Example{data: %{q: "what is z?", a: "z is z"}}
+    ]
+
+    {:ok, compiled, stats} =
+      Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "embed-m"]}], fn ->
+        KNNFewShot.compile(prog, trainset, nil, k: 2)
+      end)
+
+    assert stats.entries_per_predictor[:answer] == 3
+    state = Program.get_state(compiled, :answer)
+    assert %KNN{k: 2} = state.demo_strategy
+  end
 end

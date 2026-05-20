@@ -32,7 +32,15 @@ defmodule Dsxir.Module.RuntimeTraceTest do
         QA.Prog.forward(Program.new(QA.Prog), %{q: "x"})
       end)
 
-      assert [{:answer, %{q: "x"}, %Dsxir.Prediction{}, []}] = Trace.stop(prior)
+      assert [
+               %Dsxir.Trace.Entry{
+                 predictor: :answer,
+                 inputs: %{q: "x"},
+                 prediction: %Dsxir.Prediction{},
+                 demos: [],
+                 degraded: false
+               }
+             ] = Trace.stop(prior)
     rescue
       e ->
         _ = Trace.stop(prior)

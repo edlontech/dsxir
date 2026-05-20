@@ -44,6 +44,11 @@ defmodule Dsxir.Optimizer.BootstrapFewShot do
       outputs are still nondeterministic via temperature.
     * `:diversity_temperature` (default `1.0`) — temperature forwarded as
       per-call opt during phase 2.
+    * `:degraded_demos` (default `:exclude`) — controls whether trace entries
+      flagged `degraded: true` are eligible for the bootstrapped pool. `:exclude`
+      drops them silently; `:include` keeps them. An entry is degraded when its
+      resolved inputs include any nil from an upstream optional skip — see
+      `Dsxir.Trace.Entry`.
 
   ## Returned stats
 
@@ -86,7 +91,6 @@ defmodule Dsxir.Optimizer.BootstrapFewShot do
   alias Dsxir.Demo
   alias Dsxir.Errors
   alias Dsxir.Metric
-  alias Dsxir.Module.Info, as: ModuleInfo
   alias Dsxir.Optimizer.BootstrapFewShot.Sampler
   alias Dsxir.Program
   alias Dsxir.Settings
@@ -99,6 +103,7 @@ defmodule Dsxir.Optimizer.BootstrapFewShot do
   @default_threshold 1.0
   @default_max_errors 10
   @default_diversity_temperature 1.0
+  @default_degraded_demos :exclude
 
   @impl Dsxir.Optimizer
   def compile(_student, [], _metric, _opts) do
@@ -124,13 +129,18 @@ defmodule Dsxir.Optimizer.BootstrapFewShot do
     )
 
     labeled = phase_one(trainset, cfg)
-    {bootstrapped, errors} = phase_two(student, trainset, metric, cfg)
+    {bootstrapped, errors, reached} = phase_two(student, trainset, metric, cfg)
     error_count = length(errors)
 
     case classify_errors(errors, cfg.max_errors) do
       :ok ->
         compiled = slot_all(student, labeled, bootstrapped, trainset)
         stats = stats_for(labeled, bootstrapped, compiled, cfg, error_count)
+
+        emit_insufficient_demos(bootstrapped, student, cfg, %{
+          total: length(trainset),
+          reached: reached
+        })
 
         Telemetry.emit(
           Telemetry.optimizer_stop(),
@@ -170,9 +180,14 @@ defmodule Dsxir.Optimizer.BootstrapFewShot do
       max_errors: Keyword.get(opts, :max_errors, @default_max_errors),
       deterministic: Keyword.get(opts, :deterministic, false),
       diversity_temperature:
-        Keyword.get(opts, :diversity_temperature, @default_diversity_temperature)
+        Keyword.get(opts, :diversity_temperature, @default_diversity_temperature),
+      degraded_demos:
+        Keyword.get(opts, :degraded_demos, @default_degraded_demos) |> validate_degraded_demos()
     }
   end
+
+  defp validate_degraded_demos(:include), do: :include
+  defp validate_degraded_demos(:exclude), do: :exclude
 
   defp coerce_threshold(true), do: 1.0
   defp coerce_threshold(false), do: 0.0
@@ -206,7 +221,7 @@ defmodule Dsxir.Optimizer.BootstrapFewShot do
         do: trainset |> Enum.sort_by(&:erlang.phash2/1) |> Enum.with_index(),
         else: Enum.with_index(trainset)
 
-    initial = {empty_pool(student), []}
+    initial = {empty_pool(student), [], %{}}
 
     Enum.reduce(1..cfg.max_rounds, initial, fn round, acc ->
       run_round(round, indexed_trainset, student, metric, cfg, acc)
@@ -214,20 +229,30 @@ defmodule Dsxir.Optimizer.BootstrapFewShot do
   end
 
   defp run_round(round, indexed_trainset, student, metric, cfg, acc) do
-    Enum.reduce(indexed_trainset, acc, fn {example, idx}, {pool, errs} ->
-      maybe_run_example(student, example, idx, round, metric, cfg, pool, errs)
+    Enum.reduce(indexed_trainset, acc, fn {example, idx}, {pool, errs, reached} ->
+      ctx = %{
+        student: student,
+        example: example,
+        idx: idx,
+        round: round,
+        metric: metric,
+        cfg: cfg
+      }
+
+      maybe_run_example(ctx, pool, errs, reached)
     end)
   end
 
-  defp maybe_run_example(student, example, idx, round, metric, cfg, pool, errs) do
+  defp maybe_run_example(%{cfg: cfg} = ctx, pool, errs, reached) do
     if pool_full?(pool, cfg.max_bootstrapped_demos) do
-      {pool, errs}
+      {pool, errs, reached}
     else
-      run_round_example(student, example, idx, round, metric, cfg, pool, errs)
+      run_round_example(ctx, pool, errs, reached)
     end
   end
 
-  defp run_round_example(student, example, idx, round, metric, cfg, pool, errs) do
+  defp run_round_example(ctx, pool, errs, reached) do
+    %{student: student, example: example, idx: idx, round: round, metric: metric, cfg: cfg} = ctx
     diverse_lm = inject_diversity(Settings.resolve(:lm), round, idx, cfg)
 
     try do
@@ -247,13 +272,22 @@ defmodule Dsxir.Optimizer.BootstrapFewShot do
         end)
 
       coerced = Metric.apply(metric, example, prediction, trace)
+      reached = bump_reached(reached, trace, cfg.degraded_demos)
 
       if coerced >= cfg.threshold do
         trial_emit(round, idx, coerced, true)
-        {add_trace_to_pool(pool, trace, round, idx, cfg.max_bootstrapped_demos), errs}
+
+        {add_trace_to_pool(
+           pool,
+           trace,
+           round,
+           idx,
+           cfg.max_bootstrapped_demos,
+           cfg.degraded_demos
+         ), errs, reached}
       else
         trial_emit(round, idx, coerced, false)
-        {pool, errs}
+        {pool, errs, reached}
       end
     rescue
       e ->
@@ -262,8 +296,16 @@ defmodule Dsxir.Optimizer.BootstrapFewShot do
         stamped =
           stamp_path(e, [:bootstrap_few_shot, :"round_#{round}", :"example_#{idx}"])
 
-        {pool, [stamped | errs]}
+        {pool, [stamped | errs], reached}
     end
+  end
+
+  defp bump_reached(reached, trace, degraded_mode) do
+    trace
+    |> Enum.filter(&keep_entry?(&1, degraded_mode))
+    |> Enum.map(& &1.predictor)
+    |> Enum.uniq()
+    |> Enum.reduce(reached, fn name, acc -> Map.update(acc, name, 1, &(&1 + 1)) end)
   end
 
   defp inject_diversity(nil, _round, _idx, _cfg), do: nil
@@ -279,19 +321,29 @@ defmodule Dsxir.Optimizer.BootstrapFewShot do
     {impl, Keyword.merge(config, extra)}
   end
 
-  defp dispatch(%Program{module: user_module} = prog, %Dsxir.Example{} = example) do
-    user_module.forward(prog, Dsxir.Example.inputs(example))
+  defp dispatch(%Program{} = prog, %Dsxir.Example{} = example) do
+    Program.forward(prog, Dsxir.Example.inputs(example), on_skip: nil)
   end
 
-  defp empty_pool(%Program{predictors: predictors}),
-    do: Map.new(predictors, fn {name, _} -> {name, []} end)
+  defp empty_pool(%Program{} = prog) do
+    prog.source
+    |> Dsxir.Program.Source.optimizable_sites()
+    |> Map.new(fn site -> {site.name, []} end)
+  end
 
   defp pool_full?(pool, cap) do
     Enum.all?(pool, fn {_name, demos} -> length(demos) >= cap end)
   end
 
-  defp add_trace_to_pool(pool, trace, round, idx, cap) do
-    Enum.reduce(trace, pool, fn {name, inputs, prediction, _demos_used}, acc ->
+  defp add_trace_to_pool(pool, trace, round, idx, cap, degraded_mode) do
+    trace
+    |> Enum.filter(&keep_entry?(&1, degraded_mode))
+    |> Enum.reduce(pool, fn %Dsxir.Trace.Entry{
+                              predictor: name,
+                              inputs: inputs,
+                              prediction: prediction
+                            },
+                            acc ->
       current = Map.get(acc, name, [])
 
       if length(current) >= cap do
@@ -308,6 +360,9 @@ defmodule Dsxir.Optimizer.BootstrapFewShot do
     end)
   end
 
+  defp keep_entry?(%Dsxir.Trace.Entry{degraded: true}, :exclude), do: false
+  defp keep_entry?(%Dsxir.Trace.Entry{}, _mode), do: true
+
   defp captured_example(inputs, %Dsxir.Prediction{fields: fields}) do
     data = Map.merge(inputs, fields)
     Dsxir.Example.new(data, input_keys: Map.keys(inputs))
@@ -320,19 +375,21 @@ defmodule Dsxir.Optimizer.BootstrapFewShot do
   defp stamp_path(err, _prefix), do: err
 
   defp slot_all(
-         %Program{module: user_module, predictors: predictors} = prog,
+         %Program{source: source, predictors: predictors} = prog,
          labeled,
          bootstrapped,
          trainset
        ) do
-    decls = ModuleInfo.module(user_module)
+    decls = Dsxir.Program.Source.predictors(source)
+    sites = Dsxir.Program.Source.optimizable_sites(source)
 
     updated =
-      Map.new(predictors, fn {name, %Program.State{} = state} ->
-        decl = Enum.find(decls, &(&1.name == name))
+      Map.new(sites, fn site ->
+        decl = Enum.find(decls, &(&1.name == site.name))
+        state = Map.get(predictors, site.name, %Program.State{})
         compatible_labeled = compatible_demos(labeled, decl)
-        per_predictor = compatible_labeled ++ Map.get(bootstrapped, name, [])
-        {name, %{state | demos: per_predictor}}
+        per_predictor = compatible_labeled ++ Map.get(bootstrapped, site.name, [])
+        {site.name, %{state | demos: per_predictor}}
       end)
 
     metadata =
@@ -410,6 +467,32 @@ defmodule Dsxir.Optimizer.BootstrapFewShot do
     )
   end
 
+  defp emit_insufficient_demos(pools, %Program{source: source}, cfg, stats) do
+    max = cfg.max_bootstrapped_demos
+    degraded_mode = cfg.degraded_demos
+
+    for site <- Dsxir.Program.Source.optimizable_sites(source) do
+      got = pools |> Map.get(site.name, []) |> length()
+
+      if got < max do
+        Telemetry.emit(
+          [:dsxir, :optimizer, :insufficient_demos],
+          %{requested: max, got: got},
+          %{
+            predictor: site.name,
+            requested: max,
+            got: got,
+            reached_examples: Map.get(stats.reached, site.name, 0),
+            total_examples: stats.total,
+            degraded_excluded: degraded_mode == :exclude
+          }
+        )
+      end
+    end
+
+    :ok
+  end
+
   @impl Dsxir.Optimizer
   @doc """
   Prepare a resumable BootstrapFewShot session.
@@ -440,7 +523,7 @@ defmodule Dsxir.Optimizer.BootstrapFewShot do
           examples_remaining_in_round: examples,
           all_examples_for_round: examples,
           demos_pool: empty_pool(student),
-          predictor_decls: ModuleInfo.module(student.module),
+          predictor_decls: Dsxir.Program.Source.predictors(student.source),
           labeled_demos_slotted: labeled,
           rng_seed: :erlang.phash2({:bootstrap_few_shot, opts}),
           config: cfg,
@@ -636,22 +719,33 @@ defmodule Dsxir.Optimizer.BootstrapFewShot do
       end
 
     if coerced >= cfg.threshold do
-      new_pool = add_trace_to_pool(pool, trace, round, idx, cfg.max_bootstrapped_demos)
+      new_pool =
+        add_trace_to_pool(
+          pool,
+          trace,
+          round,
+          idx,
+          cfg.max_bootstrapped_demos,
+          cfg.degraded_demos
+        )
+
       {:ok, coerced, new_pool, true}
     else
       {:ok, coerced, pool, false}
     end
   end
 
-  defp slot_session(%Program{predictors: predictors} = prog, labeled, demos_pool) do
-    decls = ModuleInfo.module(prog.module)
+  defp slot_session(%Program{source: source, predictors: predictors} = prog, labeled, demos_pool) do
+    decls = Dsxir.Program.Source.predictors(source)
+    sites = Dsxir.Program.Source.optimizable_sites(source)
 
     updated =
-      Map.new(predictors, fn {name, %Program.State{} = state} ->
-        decl = Enum.find(decls, &(&1.name == name))
+      Map.new(sites, fn site ->
+        decl = Enum.find(decls, &(&1.name == site.name))
+        state = Map.get(predictors, site.name, %Program.State{})
         compatible_labeled = compatible_demos(labeled, decl)
-        per_predictor = compatible_labeled ++ Map.get(demos_pool, name, [])
-        {name, %{state | demos: per_predictor}}
+        per_predictor = compatible_labeled ++ Map.get(demos_pool, site.name, [])
+        {site.name, %{state | demos: per_predictor}}
       end)
 
     %{prog | predictors: updated}

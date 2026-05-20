@@ -67,6 +67,50 @@ defmodule Dsxir.Test.Fixtures.Programs.ArithmeticQA do
   def forward(prog, %{question: q}), do: call(prog, :qa, %{question: q})
 end
 
+defmodule Dsxir.Test.Fixtures.LinearABC do
+  @moduledoc """
+  Three-predictor linear chain `a -> b -> c`, all using the ScriptedLM
+  fixture against `AnswerQuestion`. Mirrors the runtime-program node names
+  used in executor tests.
+  """
+  use Dsxir.Module
+
+  predictor :a, Dsxir.Test.Fixtures.ScriptedLM, signature: Dsxir.Test.Fixtures.AnswerQuestion
+  predictor :b, Dsxir.Test.Fixtures.ScriptedLM, signature: Dsxir.Test.Fixtures.AnswerQuestion
+  predictor :c, Dsxir.Test.Fixtures.ScriptedLM, signature: Dsxir.Test.Fixtures.AnswerQuestion
+
+  def forward(prog, %{question: q}), do: call(prog, :a, %{question: q})
+end
+
+defmodule Dsxir.Test.Fixtures.DiamondABCD do
+  @moduledoc """
+  Four-predictor diamond `a -> {b, c} -> d`, all using the ScriptedLM
+  fixture against `AnswerQuestion`.
+  """
+  use Dsxir.Module
+
+  predictor :a, Dsxir.Test.Fixtures.ScriptedLM, signature: Dsxir.Test.Fixtures.AnswerQuestion
+  predictor :b, Dsxir.Test.Fixtures.ScriptedLM, signature: Dsxir.Test.Fixtures.AnswerQuestion
+  predictor :c, Dsxir.Test.Fixtures.ScriptedLM, signature: Dsxir.Test.Fixtures.AnswerQuestion
+  predictor :d, Dsxir.Test.Fixtures.ScriptedLM, signature: Dsxir.Test.Fixtures.AnswerQuestion
+
+  def forward(prog, %{question: q}), do: call(prog, :a, %{question: q})
+end
+
+defmodule Dsxir.Test.Fixtures.QAScripted do
+  @moduledoc """
+  Single-predictor program mirroring `Dsxir.Test.Fixtures.QA.Prog`'s shape
+  (`:answer` over `QA.Sig`'s `q -> a` fields) but routed through the
+  `ScriptedLM` fixture so the parameterized Source contract suite can drive
+  the module variant without touching a real LM.
+  """
+  use Dsxir.Module
+
+  predictor :answer, Dsxir.Test.Fixtures.ScriptedLM, signature: Dsxir.Test.Fixtures.QA.Sig
+
+  def forward(prog, %{q: q}), do: call(prog, :answer, %{q: q})
+end
+
 defmodule Dsxir.Test.Fixtures.Programs do
   @moduledoc """
   Synthetic GSM8K-shaped arithmetic word problems for fixture programs.

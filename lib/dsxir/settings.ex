@@ -29,6 +29,7 @@ defmodule Dsxir.Settings do
             callbacks: [],
             cache: true,
             call_plugs: [],
+            program_plugs: [],
             metadata: %{}
 
   @type t :: %__MODULE__{
@@ -37,6 +38,7 @@ defmodule Dsxir.Settings do
           callbacks: list(),
           cache: boolean(),
           call_plugs: list(),
+          program_plugs: list(),
           metadata: map()
         }
 
@@ -53,6 +55,7 @@ defmodule Dsxir.Settings do
       callbacks: [],
       cache: true,
       call_plugs: [],
+      program_plugs: [],
       metadata: %{}
     }
   end
@@ -233,6 +236,7 @@ defmodule Dsxir.Settings do
             callbacks: length(settings.callbacks),
             cache: settings.cache,
             call_plugs: length(settings.call_plugs),
+            program_plugs: length(settings.program_plugs),
             metadata: settings.metadata
           },
           opts

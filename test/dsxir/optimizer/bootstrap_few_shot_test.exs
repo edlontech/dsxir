@@ -277,6 +277,79 @@ defmodule Dsxir.Optimizer.BootstrapFewShotTest do
     end)
   end
 
+  defmodule DegradedProg do
+    use Dsxir.Module
+
+    predictor(:answer, Dsxir.Predictor.Predict, signature: Dsxir.Test.Fixtures.QA.Sig)
+
+    def forward(p, inputs) do
+      Dsxir.Module.Runtime.call(p, :answer, inputs, degraded: true)
+    end
+  end
+
+  test "degraded_demos: :exclude (default) drops degraded entries from the pool" do
+    scripted_lm(fn _ -> "good-stub" end)
+
+    Dsxir.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
+      {:ok, compiled, stats} =
+        BootstrapFewShot.compile(
+          Program.new(DegradedProg),
+          QA.trainset_10(),
+          &threshold_metric/3,
+          max_labeled_demos: 0,
+          max_bootstrapped_demos: 3,
+          max_rounds: 1,
+          threshold: 1.0,
+          deterministic: true
+        )
+
+      assert stats.bootstrapped_demos == 0
+      assert Program.get_state(compiled, :answer).demos == []
+    end)
+  end
+
+  test "degraded_demos: :include keeps degraded entries in the pool" do
+    scripted_lm(fn idx -> "good-#{idx}" end)
+
+    Dsxir.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
+      {:ok, compiled, stats} =
+        BootstrapFewShot.compile(
+          Program.new(DegradedProg),
+          QA.trainset_10(),
+          &threshold_metric/3,
+          max_labeled_demos: 0,
+          max_bootstrapped_demos: 3,
+          max_rounds: 1,
+          threshold: 1.0,
+          deterministic: true,
+          degraded_demos: :include
+        )
+
+      assert stats.bootstrapped_demos == 3
+      demos = Program.get_state(compiled, :answer).demos
+      assert length(demos) == 3
+      assert Enum.all?(demos, &match?(%Dsxir.Demo{kind: :bootstrapped}, &1))
+    end)
+  end
+
+  test "degraded_demos: <invalid> raises FunctionClauseError during option parsing" do
+    scripted_lm(fn _ -> "good-stub" end)
+
+    Dsxir.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
+      assert_raise FunctionClauseError, fn ->
+        BootstrapFewShot.compile(
+          Program.new(QA.Prog),
+          QA.trainset_10(),
+          &threshold_metric/3,
+          max_labeled_demos: 0,
+          max_bootstrapped_demos: 1,
+          max_rounds: 1,
+          degraded_demos: :nonsense
+        )
+      end
+    end)
+  end
+
   test "telemetry: emits start, trial, and stop" do
     scripted_lm(fn _ -> "good-stub" end)
     parent = self()

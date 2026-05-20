@@ -2,17 +2,25 @@ defmodule Dsxir.Artifact do
   @moduledoc """
   Encode and decode `Dsxir.Program` save/load artifacts.
 
-  The on-disk JSON shape mirrors DSPy structurally:
+  The on-disk JSON envelope (format_version "2"):
 
       {
-        "<predictor_name>": {"instructions": String | null, "demos": [Map, ...]},
-        ...,
-        "_metadata": {"compiled_with": ..., "score": ..., "trainset_hash": ...}
+        "format_version": "2",
+        "source_kind": "module" | "runtime",
+        "source": <blob>,
+        "predictors": {"<name>": {"instructions": ..., "demos": [...]}, ...},
+        "metadata": {"compiled_with": ..., "score": ..., "trainset_hash": ...}
       }
 
-  `save/2` writes one program. `load/3` reads one program into a target module
-  and validates the artifact's predictor + field shape against the target's
-  signatures, raising `Dsxir.Errors.Invalid.SignatureMismatch` on any drift.
+  For `source_kind: "module"`, `source` is the user-module atom name (e.g.
+  `"Elixir.MyApp.QA"`). For `source_kind: "runtime"`, `source` is a JSON-safe
+  serialization of the wrapped `%Dsxir.RuntimeProgram{}` carrying guard
+  *sources* only — never parsed ASTs. On load the runtime program is
+  re-validated end-to-end so guard sources are re-parsed and type-checked.
+
+  `encode/1` always emits format_version "2"; saving as v1 is unsupported.
+  `decode/2` and `decode_and_hydrate/2` upgrade v1 (legacy unwrapped
+  per-predictor maps) on the fly by inferring `source_kind: "module"`.
   """
 
   alias Dsxir.DemoStrategy.KNN
@@ -20,9 +28,11 @@ defmodule Dsxir.Artifact do
   alias Dsxir.Errors
   alias Dsxir.Module.Info, as: ModuleInfo
   alias Dsxir.Program
+  alias Dsxir.Program.Source
   alias Dsxir.Signature.Runtime, as: SignatureRuntime
 
   @reserved_metadata_key "_metadata"
+  @format_version "2"
 
   @doc """
   Write `prog` to `path` as pretty JSON. Returns `{:ok, path}` on success or
@@ -65,16 +75,35 @@ defmodule Dsxir.Artifact do
 
   @doc false
   @spec encode(Program.t()) :: map()
-  def encode(%Program{module: user_module, predictors: predictors, metadata: metadata}) do
-    decls = ModuleInfo.module(user_module)
+  def encode(%Program{source: source, predictors: predictors, metadata: metadata}) do
+    {kind, blob} = encode_source(source)
 
-    per_predictor =
-      Map.new(decls, fn decl ->
-        state = Map.get(predictors, decl.name, %Program.State{})
-        {Atom.to_string(decl.name), encode_predictor(state, decl.signature)}
-      end)
+    %{
+      "format_version" => @format_version,
+      "source_kind" => kind,
+      "source" => blob,
+      "predictors" => encode_predictors(source, predictors),
+      "metadata" => encode_metadata(metadata)
+    }
+  end
 
-    Map.put(per_predictor, @reserved_metadata_key, encode_metadata(metadata))
+  defp encode_source(%Source.Module{} = src), do: {"module", Source.to_artifact_blob(src)}
+
+  defp encode_source(%Source.RuntimeProgram{} = src),
+    do: {"runtime", Source.to_artifact_blob(src)}
+
+  defp encode_predictors(%Source.Module{module: mod}, predictors) do
+    Map.new(ModuleInfo.module(mod), fn decl ->
+      state = Map.get(predictors, decl.name, %Program.State{})
+      {Atom.to_string(decl.name), encode_predictor(state, decl.signature)}
+    end)
+  end
+
+  defp encode_predictors(%Source.RuntimeProgram{runtime_program: rp}, predictors) do
+    Map.new(rp.nodes, fn node ->
+      state = Map.get(predictors, node.name, %Program.State{})
+      {Atom.to_string(node.name), encode_predictor(state, node.signature)}
+    end)
   end
 
   defp encode_predictor(%Program.State{} = state, signature) do
@@ -209,6 +238,9 @@ defmodule Dsxir.Artifact do
   Read a saved artifact from `path` and hydrate it into a fresh program for
   `target_module`. Returns `{:ok, program}` or `{:error, exception}` on read,
   decode, or structural validation failures.
+
+  Accepts v1 (legacy, per-predictor top-level map) and v2 envelopes. For v2
+  module-source envelopes the on-disk module name must match `target_module`.
   """
   @spec load(module(), Path.t(), keyword()) :: {:ok, Program.t()} | {:error, Exception.t()}
   def load(target_module, path, _opts \\ []) when is_atom(target_module) and is_binary(path) do
@@ -221,6 +253,46 @@ defmodule Dsxir.Artifact do
 
       {:error, reason} when is_atom(reason) ->
         {:error, %File.Error{path: path, action: "read", reason: reason}}
+    end
+  end
+
+  @doc """
+  Decode a v2 envelope (or v1, upgrading on the fly) directly from a JSON
+  string into a `%Program{}`. Raises on validation failure or on a malformed
+  envelope.
+
+  Pass `:target_module` to disambiguate a v1 legacy payload that does not
+  carry its source identity inline. Without `:target_module`, v1 payloads
+  raise `Dsxir.Errors.Invalid.Configuration`.
+  """
+  @spec decode_and_hydrate(String.t() | map(), keyword()) :: Program.t()
+  def decode_and_hydrate(json_or_map, opts \\ [])
+
+  def decode_and_hydrate(json, opts) when is_binary(json) do
+    decode_and_hydrate(Jason.decode!(json), opts)
+  end
+
+  def decode_and_hydrate(%{"format_version" => "2"} = blob, _opts) do
+    case hydrate_v2(blob) do
+      {:ok, prog} -> prog
+      {:error, exc} -> raise exc
+    end
+  end
+
+  def decode_and_hydrate(%{} = legacy, opts) do
+    case Keyword.fetch(opts, :target_module) do
+      {:ok, mod} when is_atom(mod) ->
+        case decode(mod, legacy) do
+          {:ok, prog} -> prog
+          {:error, exc} -> raise exc
+        end
+
+      :error ->
+        raise %Errors.Invalid.Configuration{
+          key: :target_module,
+          value: nil,
+          reason: :v1_artifact_requires_target_module
+        }
     end
   end
 
@@ -245,8 +317,78 @@ defmodule Dsxir.Artifact do
   when the persisted shape does not match the target module's declared
   predictors.
   """
-  @spec decode(module(), map()) :: {:ok, Program.t()} | {:error, Exception.t()}
+  def decode(target_module, %{"format_version" => "2"} = envelope) when is_atom(target_module) do
+    decode_v2_into_target(target_module, envelope)
+  end
+
   def decode(target_module, decoded) when is_atom(target_module) and is_map(decoded) do
+    decode_v1(target_module, decoded)
+  end
+
+  defp decode_v2_into_target(_target_module, %{"source_kind" => "runtime"} = envelope) do
+    hydrate_v2(envelope)
+  end
+
+  defp decode_v2_into_target(target_module, %{"source_kind" => "module"} = envelope) do
+    with {:ok, on_disk_source} <- decode_on_disk_module_source(envelope),
+         :ok <- ensure_target_module_matches(target_module, on_disk_source.module) do
+      decls = ModuleInfo.module(target_module)
+      expected = expected_shape(decls)
+      predictors_payload = Map.get(envelope, "predictors", %{})
+      metadata_payload = Map.get(envelope, "metadata", %{})
+      loaded = Map.new(predictors_payload, fn {name, body} -> {name, demo_keys_in(body)} end)
+
+      case structural_diff(expected, loaded) do
+        %{missing_predictors: [], extra_predictors: [], field_diffs: empty} when empty == %{} ->
+          hydrate_with_source(on_disk_source, decls, predictors_payload, metadata_payload)
+
+        diff ->
+          {:error,
+           %Errors.Invalid.SignatureMismatch{
+             module: target_module,
+             expected: expected,
+             loaded: loaded,
+             diff: diff
+           }}
+      end
+    end
+  end
+
+  defp decode_v2_into_target(_target_module, envelope), do: hydrate_v2(envelope)
+
+  defp decode_on_disk_module_source(%{"source" => mod_str}) when is_binary(mod_str) do
+    {:ok, Source.Module.from_artifact_blob(mod_str)}
+  rescue
+    ArgumentError ->
+      {:error,
+       %Errors.Invalid.Configuration{
+         key: :source,
+         value: mod_str,
+         reason: :module_not_loaded
+       }}
+  end
+
+  defp decode_on_disk_module_source(envelope) do
+    {:error,
+     %Errors.Invalid.Configuration{
+       key: :source,
+       value: Map.get(envelope, "source"),
+       reason: :unknown_or_missing
+     }}
+  end
+
+  defp ensure_target_module_matches(target, target), do: :ok
+
+  defp ensure_target_module_matches(target, on_disk) do
+    {:error,
+     %Errors.Invalid.Configuration{
+       key: :target_module,
+       value: %{target: target, on_disk: on_disk},
+       reason: :module_mismatch
+     }}
+  end
+
+  defp decode_v1(target_module, decoded) do
     decls = ModuleInfo.module(target_module)
     expected = expected_shape(decls)
     {metadata_payload, predictors_payload} = Map.pop(decoded, @reserved_metadata_key, %{})
@@ -254,7 +396,8 @@ defmodule Dsxir.Artifact do
 
     case structural_diff(expected, loaded) do
       %{missing_predictors: [], extra_predictors: [], field_diffs: empty} when empty == %{} ->
-        hydrate(target_module, decls, predictors_payload, metadata_payload)
+        source = Source.Module.new!(target_module)
+        hydrate_with_source(source, decls, predictors_payload, metadata_payload)
 
       diff ->
         {:error,
@@ -350,8 +493,51 @@ defmodule Dsxir.Artifact do
 
   defp safe_existing_atom(name) when is_atom(name), do: name
 
-  defp hydrate(target_module, decls, predictors_payload, metadata_payload) do
-    fresh = Program.new(target_module)
+  defp hydrate_v2(%{"source_kind" => "module", "source" => mod_str} = envelope)
+       when is_binary(mod_str) do
+    source = Source.Module.from_artifact_blob(mod_str)
+    decls = ModuleInfo.module(source.module)
+    predictors_payload = Map.get(envelope, "predictors", %{})
+    metadata_payload = Map.get(envelope, "metadata", %{})
+    hydrate_with_source(source, decls, predictors_payload, metadata_payload)
+  rescue
+    ArgumentError ->
+      {:error,
+       %Errors.Invalid.Configuration{
+         key: :source,
+         value: envelope["source"],
+         reason: :module_not_loaded
+       }}
+  end
+
+  defp hydrate_v2(%{"source_kind" => "runtime", "source" => blob} = envelope)
+       when is_map(blob) do
+    source = Dsxir.Program.Source.RuntimeProgram.from_artifact_blob(blob)
+    decls = Source.predictors(source)
+    predictors_payload = Map.get(envelope, "predictors", %{})
+    metadata_payload = Map.get(envelope, "metadata", %{})
+    hydrate_with_source(source, decls, predictors_payload, metadata_payload)
+  rescue
+    ArgumentError ->
+      {:error,
+       %Errors.Invalid.Configuration{
+         key: :source,
+         value: envelope["source"],
+         reason: :atom_not_loaded
+       }}
+  end
+
+  defp hydrate_v2(envelope) do
+    {:error,
+     %Errors.Invalid.Configuration{
+       key: :source_kind,
+       value: Map.get(envelope, "source_kind"),
+       reason: :unknown_or_missing
+     }}
+  end
+
+  defp hydrate_with_source(source, decls, predictors_payload, metadata_payload) do
+    fresh = Program.new(source, Enum.map(decls, & &1.name))
 
     result =
       Enum.reduce_while(decls, {:ok, fresh.predictors}, fn decl, {:ok, acc} ->

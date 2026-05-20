@@ -22,3 +22,26 @@ defmodule Dsxir.Errors.Framework.OptimizerError do
     "framework optimizer error: optimizer=#{inspect(optimizer)} inner=#{inspect(inner)}"
   end
 end
+
+defmodule Dsxir.Errors.Framework.MissingInput do
+  @moduledoc """
+  Framework-invariant breach. If validation succeeded, this cannot fire.
+  Never user-facing; if you see this, file a bug.
+  """
+  use Splode.Error, fields: [:node, :field], class: :framework
+
+  def message(%{node: node, field: field}),
+    do: "framework bug: missing input #{inspect(field)} for node #{inspect(node)}"
+end
+
+defmodule Dsxir.Errors.Framework.CycleDetected do
+  @moduledoc """
+  Raised by the executor when topological sort detects a cycle. The
+  validator already proves runtime programs are acyclic, so this surfaces
+  a framework-invariant breach (someone bypassed the validator).
+  """
+  use Splode.Error, fields: [:nodes], class: :framework
+
+  def message(%{nodes: nodes}),
+    do: "framework bug: cycle detected among nodes #{inspect(nodes)}"
+end

@@ -12,12 +12,17 @@ defmodule Dsxir.Trace do
 
   Entries are pushed on the head (`[entry | acc]`) and reversed on `stop/1`,
   so callers see them in forward order.
+
+  Entries are `%Dsxir.Trace.Entry{}` structs. `record/1` also accepts the
+  legacy 4-tuple shape `{predictor, inputs, prediction, demos}` and wraps it
+  with `degraded: false` via `Dsxir.Trace.Entry.from/1`; producers that
+  predate the struct continue to work unchanged.
   """
 
   @key {__MODULE__, :collector}
 
-  @type entry ::
-          {atom(), map(), Dsxir.Prediction.t(), [Dsxir.Demo.t() | Dsxir.Example.t()]}
+  @type entry :: Dsxir.Trace.Entry.t()
+  @type legacy_entry :: Dsxir.Trace.Entry.legacy_tuple()
 
   @doc "Open a fresh accumulator. Returns the prior slot value for `stop/1`."
   @spec start() :: nil | [entry()]
@@ -40,12 +45,20 @@ defmodule Dsxir.Trace do
     collected
   end
 
-  @doc "Append an entry. No-op when no `with_trace` is active."
-  @spec record(entry()) :: :ok
+  @doc """
+  Append an entry. No-op when no `with_trace` is active.
+
+  Accepts either a `%Dsxir.Trace.Entry{}` struct or the legacy 4-tuple shape
+  `{predictor, inputs, prediction, demos}`. Tuples are wrapped with
+  `degraded: false` for back-compat with producers that have not yet migrated.
+  """
+  @spec record(entry() | legacy_entry()) :: :ok
   def record(entry) do
+    struct = Dsxir.Trace.Entry.from(entry)
+
     case Process.get(@key) do
       nil -> :ok
-      list when is_list(list) -> Process.put(@key, [entry | list]) |> then(fn _ -> :ok end)
+      list when is_list(list) -> Process.put(@key, [struct | list]) |> then(fn _ -> :ok end)
     end
   end
 

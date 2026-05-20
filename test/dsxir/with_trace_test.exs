@@ -20,7 +20,16 @@ defmodule Dsxir.WithTraceTest do
 
       assert %Program{} = prog
       assert %Dsxir.Prediction{} = pred
-      assert [{:answer, %{q: "x"}, ^pred, []}] = trace
+
+      assert [
+               %Dsxir.Trace.Entry{
+                 predictor: :answer,
+                 inputs: %{q: "x"},
+                 prediction: ^pred,
+                 demos: [],
+                 degraded: false
+               }
+             ] = trace
     end)
   end
 

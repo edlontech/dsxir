@@ -2,6 +2,7 @@ defmodule Dsxir.TraceTest do
   use ExUnit.Case, async: true
 
   alias Dsxir.Trace
+  alias Dsxir.Trace.Entry
 
   defp pred, do: %Dsxir.Prediction{fields: %{a: "x"}}
 
@@ -18,7 +19,7 @@ defmodule Dsxir.TraceTest do
     :ok = Trace.record({:a, %{}, pred(), []})
     :ok = Trace.record({:b, %{}, pred(), []})
 
-    assert [{:a, _, _, _}, {:b, _, _, _}] = Trace.stop(prior)
+    assert [%Entry{predictor: :a}, %Entry{predictor: :b}] = Trace.stop(prior)
     refute Trace.active?()
   end
 
@@ -28,10 +29,13 @@ defmodule Dsxir.TraceTest do
 
     inner = Trace.start()
     :ok = Trace.record({:inner, %{}, pred(), []})
-    assert [{:inner, _, _, _}] = Trace.stop(inner)
+    assert [%Entry{predictor: :inner}] = Trace.stop(inner)
 
     :ok = Trace.record({:outer_again, %{}, pred(), []})
-    assert [{:outer, _, _, _}, {:outer_again, _, _, _}] = Trace.stop(outer)
+
+    assert [%Entry{predictor: :outer}, %Entry{predictor: :outer_again}] =
+             Trace.stop(outer)
+
     refute Trace.active?()
   end
 
@@ -41,5 +45,12 @@ defmodule Dsxir.TraceTest do
     :ok = Trace.record({:x, %{}, pred(), []})
     _ = Trace.stop(prior)
     assert Process.get({Dsxir.Trace, :collector}) == nil
+  end
+
+  test "legacy tuple input is auto-wrapped with degraded: false" do
+    prior = Trace.start()
+    :ok = Trace.record({:legacy, %{}, pred(), []})
+
+    assert [%Entry{predictor: :legacy, degraded: false}] = Trace.stop(prior)
   end
 end

@@ -2,6 +2,7 @@ defmodule Dsxir.ArtifactLoadTest do
   use ExUnit.Case, async: true
 
   alias Dsxir.Artifact
+  alias Dsxir.Errors.Invalid.Configuration, as: InvalidConfiguration
   alias Dsxir.Errors.Invalid.SignatureMismatch
   alias Dsxir.Optimizer.LabeledFewShot
   alias Dsxir.Program
@@ -139,24 +140,38 @@ defmodule Dsxir.ArtifactLoadTest do
   end
 
   @tag :tmp_dir
-  test "load into module with missing predictor produces SignatureMismatch with :extra_predictors",
+  test "load into module with mismatched on-disk source raises Invalid.Configuration",
        %{tmp_dir: tmp_dir} do
     path = save_compiled(ProgWithExtra, tmp_dir)
+
+    {:error, %InvalidConfiguration{key: :target_module, reason: :module_mismatch} = exc} =
+      Artifact.load(ProgA, path)
+
+    assert exc.value == %{target: ProgA, on_disk: ProgWithExtra}
+  end
+
+  @tag :tmp_dir
+  test "structural diff for missing on-disk predictor reports :extra_predictors",
+       %{tmp_dir: tmp_dir} do
+    path = save_compiled(ProgWithExtra, tmp_dir)
+    path = rewrite_source(path, ProgA, tmp_dir, "extra")
     {:error, %SignatureMismatch{diff: diff}} = Artifact.load(ProgA, path)
     assert :rerank in diff.extra_predictors
   end
 
   @tag :tmp_dir
-  test "load into module with extra predictor produces SignatureMismatch with :missing_predictors",
+  test "structural diff for added target predictor reports :missing_predictors",
        %{tmp_dir: tmp_dir} do
     path = save_compiled(ProgA, tmp_dir)
+    path = rewrite_source(path, ProgWithExtra, tmp_dir, "missing")
     {:error, %SignatureMismatch{diff: diff}} = Artifact.load(ProgWithExtra, path)
     assert :rerank in diff.missing_predictors
   end
 
   @tag :tmp_dir
-  test "load into module with mismatched field produces field_diffs entry", %{tmp_dir: tmp_dir} do
+  test "structural diff for mismatched fields reports field_diffs entry", %{tmp_dir: tmp_dir} do
     path = save_compiled(ProgA, tmp_dir)
+    path = rewrite_source(path, ProgB, tmp_dir, "fields")
     {:error, %SignatureMismatch{diff: diff}} = Artifact.load(ProgB, path)
     assert %{answer: %{missing_fields: missing, extra_fields: extra}} = diff.field_diffs
     assert :answer in missing
@@ -176,9 +191,28 @@ defmodule Dsxir.ArtifactLoadTest do
   end
 
   @tag :tmp_dir
-  test "load!/3 raises on SignatureMismatch", %{tmp_dir: tmp_dir} do
+  test "load!/3 raises Invalid.Configuration on module-mismatch", %{tmp_dir: tmp_dir} do
     path = save_compiled(ProgA, tmp_dir)
+    assert_raise InvalidConfiguration, fn -> Artifact.load!(ProgB, path) end
+  end
+
+  @tag :tmp_dir
+  test "load!/3 raises SignatureMismatch when on-disk source matches but predictors do not",
+       %{tmp_dir: tmp_dir} do
+    path = save_compiled(ProgA, tmp_dir)
+    path = rewrite_source(path, ProgB, tmp_dir, "loadbang")
     assert_raise SignatureMismatch, fn -> Artifact.load!(ProgB, path) end
+  end
+
+  defp rewrite_source(path, new_source_module, tmp_dir, suffix) do
+    decoded = path |> File.read!() |> Jason.decode!()
+    rewritten = Map.put(decoded, "source", Atom.to_string(new_source_module))
+
+    new_path =
+      Path.join(tmp_dir, "dsxir-rewritten-#{suffix}-#{:erlang.unique_integer([:positive])}.json")
+
+    File.write!(new_path, Jason.encode!(rewritten))
+    new_path
   end
 
   defmodule CoTProg do
