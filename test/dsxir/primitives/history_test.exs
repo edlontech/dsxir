@@ -18,7 +18,7 @@ defmodule Dsxir.Primitives.HistoryTest do
              h
   end
 
-  test "to_messages/1 maps each entry to a Sycophant.Message" do
+  test "to_messages/1 returns role/content maps for each entry" do
     h =
       History.new()
       |> History.push(:system, "sys")
@@ -26,9 +26,9 @@ defmodule Dsxir.Primitives.HistoryTest do
       |> History.push(:assistant, "a")
 
     assert [
-             %Sycophant.Message{role: :system, content: "sys"},
-             %Sycophant.Message{role: :user, content: "u"},
-             %Sycophant.Message{role: :assistant, content: "a"}
+             %{role: :system, content: "sys"},
+             %{role: :user, content: "u"},
+             %{role: :assistant, content: "a"}
            ] = History.to_messages(h)
   end
 end

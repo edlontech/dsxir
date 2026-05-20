@@ -13,7 +13,6 @@ defmodule Dsxir.Adapter.Chat do
   alias Dsxir.Settings
   alias Dsxir.Signature.Runtime
   alias Dsxir.Telemetry
-  alias Sycophant.Message
 
   @marker ~r/\[\[\s*##\s*(?<name>[a-zA-Z0-9_]+)\s*##\s*\]\]/
 
@@ -26,9 +25,11 @@ defmodule Dsxir.Adapter.Chat do
     {history_messages, scalar_inputs, history_names} = split_history_inputs(signature, inputs)
 
     messages =
-      [Message.system(system_prompt(signature, opts))]
+      [%{role: :system, content: system_prompt(signature, opts)}]
       |> Enum.concat(history_messages)
-      |> Enum.concat([Message.user(user_prompt(signature, scalar_inputs, history_names, demos))])
+      |> Enum.concat([
+        %{role: :user, content: user_prompt(signature, scalar_inputs, history_names, demos)}
+      ])
 
     Telemetry.emit(
       Telemetry.adapter_format(),

@@ -16,9 +16,6 @@ defmodule Dsxir.Primitives.Tool do
   exception raised inside the function is caught by `execute/2` and surfaced as
   an `Dsxir.Errors.Invalid.Tool` value with `reason: :execution_error` so the
   ReAct loop can route around it.
-
-  `to_sycophant_tool/1` returns a `%Sycophant.Tool{}` with `function: nil` so
-  Sycophant does not auto-execute the tool. dsxir owns the loop.
   """
 
   @derive {Inspect, except: [:function]}
@@ -68,17 +65,5 @@ defmodule Dsxir.Primitives.Tool do
            inner: zoi_errors
          }}
     end
-  end
-
-  @doc "Build a `%Sycophant.Tool{}` shape; `function: nil` keeps Sycophant out of the loop."
-  @spec to_sycophant_tool(t()) :: Sycophant.Tool.t()
-  def to_sycophant_tool(%__MODULE__{} = tool) do
-    %Sycophant.Tool{
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters,
-      function: nil,
-      schema_source: :zoi
-    }
   end
 end

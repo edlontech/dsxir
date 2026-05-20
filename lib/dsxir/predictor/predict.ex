@@ -39,10 +39,10 @@ defmodule Dsxir.Predictor.Predict do
     * `:path` — list of path segments stamped onto raised adapter errors for
       nested predictor composition.
     * `:stream` — 1-arity callback `(chunk -> :ok)` forwarded to the LM impl.
-      The callback fires with `%Sycophant.StreamChunk{}` values during
-      generation; the final `%Dsxir.Prediction{}` is still returned. Chat
-      adapter only — the Json adapter raises
-      `Dsxir.Errors.Invalid.Configuration` when `:stream` is set.
+      The chunk shape is defined by the active `Dsxir.LM` implementation;
+      the final `%Dsxir.Prediction{}` is still returned. Chat adapter only —
+      the Json adapter raises `Dsxir.Errors.Invalid.Configuration` when
+      `:stream` is set.
   """
 
   @behaviour Dsxir.Predictor

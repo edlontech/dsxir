@@ -27,16 +27,16 @@ defmodule Dsxir.Adapter.ChatHistoryTest do
 
     [system, h1, h2, user] = Chat.format(HistorySig, inputs, [], [])
 
-    assert %Sycophant.Message{role: :system} = system
-    assert %Sycophant.Message{role: :user, content: "Earlier turn?"} = h1
-    assert %Sycophant.Message{role: :assistant, content: "Earlier answer."} = h2
-    assert %Sycophant.Message{role: :user, content: user_body} = user
+    assert %{role: :system} = system
+    assert %{role: :user, content: "Earlier turn?"} = h1
+    assert %{role: :assistant, content: "Earlier answer."} = h2
+    assert %{role: :user, content: user_body} = user
     refute user_body =~ "Earlier turn?"
     assert user_body =~ "Latest question?"
   end
 
   test "format/4 elides the history block from the user prompt body" do
-    [_, _, %Sycophant.Message{content: body}] =
+    [_, _, %{content: body}] =
       Chat.format(
         HistorySig,
         %{

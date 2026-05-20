@@ -9,7 +9,13 @@ defmodule Dsxir.Adapter do
     * `Dsxir.Adapter.Json` — provider-native structured output, added later.
   """
 
-  @type messages :: [Sycophant.Message.t()]
+  @type messages :: [
+          %{
+            required(:role) => atom(),
+            required(:content) => String.t(),
+            optional(atom()) => any()
+          }
+        ]
   @type lm_response :: String.t()
   @type signature :: module() | Dsxir.Signature.Compiled.t()
 

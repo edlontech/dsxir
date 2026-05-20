@@ -166,7 +166,7 @@ defmodule Dsxir.MixProject do
       {:stream_data, "~> 1.1", only: :test},
       {:recode, "~> 0.8", only: [:dev], runtime: false},
       {:spark, "~> 2.7"},
-      {:sycophant, "~> 0.4"},
+      {:sycophant, "~> 0.4", optional: true},
       {:tidewave, "~> 0.5", only: :dev, runtime: false}
     ]
   end

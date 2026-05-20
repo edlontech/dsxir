@@ -32,7 +32,6 @@ defmodule Dsxir.Adapter.Json do
   alias Dsxir.Settings
   alias Dsxir.Signature.Runtime
   alias Dsxir.Telemetry
-  alias Sycophant.Message
 
   @impl Dsxir.Adapter
   def lm_mode, do: :object
@@ -58,8 +57,8 @@ defmodule Dsxir.Adapter.Json do
     start = System.monotonic_time()
 
     messages = [
-      Message.system(system_prompt(signature, opts)),
-      Message.user(user_prompt(signature, inputs, demos))
+      %{role: :system, content: system_prompt(signature, opts)},
+      %{role: :user, content: user_prompt(signature, inputs, demos)}
     ]
 
     Telemetry.emit(
@@ -185,10 +184,12 @@ defmodule Dsxir.Adapter.Json do
       |> Runtime.outputs()
       |> Enum.map_join(", ", &Atom.to_string(&1.name))
 
-    Message.user(
-      "Previous response failed schema validation: #{inspect(zoi_errors)}. " <>
-        "Return a JSON object whose keys are exactly #{names}, and whose values conform to the declared types."
-    )
+    %{
+      role: :user,
+      content:
+        "Previous response failed schema validation: #{inspect(zoi_errors)}. " <>
+          "Return a JSON object whose keys are exactly #{names}, and whose values conform to the declared types."
+    }
   end
 
   defp system_prompt(signature, opts) do

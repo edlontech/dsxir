@@ -35,17 +35,9 @@ defmodule Dsxir.Primitives.History do
     %{h | messages: msgs ++ [%{role: role, content: content}]}
   end
 
-  @doc "Materialize as a list of `%Sycophant.Message{}` for adapter consumption."
-  @spec to_messages(t()) :: [Sycophant.Message.t()]
-  def to_messages(%__MODULE__{messages: msgs}) do
-    Enum.map(msgs, fn %{role: role, content: content} ->
-      case role do
-        :system -> Sycophant.Message.system(content)
-        :user -> Sycophant.Message.user(content)
-        :assistant -> Sycophant.Message.assistant(content)
-      end
-    end)
-  end
+  @doc "Materialize as a list of role/content maps for adapter consumption."
+  @spec to_messages(t()) :: [message()]
+  def to_messages(%__MODULE__{messages: msgs}), do: msgs
 
   defimpl Inspect do
     import Inspect.Algebra

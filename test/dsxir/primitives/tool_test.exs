@@ -36,9 +36,4 @@ defmodule Dsxir.Primitives.ToolTest do
     assert {:error, %Invalid.Tool{tool: "calculator", reason: :argument_validation}} =
              Tool.execute(calculator(), %{expression: 42})
   end
-
-  test "to_sycophant_tool/1 omits the function so Sycophant does not auto-execute" do
-    syc = Tool.to_sycophant_tool(calculator())
-    assert %Sycophant.Tool{name: "calculator", function: nil, schema_source: :zoi} = syc
-  end
 end
