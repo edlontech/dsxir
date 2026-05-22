@@ -27,6 +27,23 @@
 - `Dsxir.Predicate.TypeChecker` treats `:integer` and `:float` as
   compatible for comparison ops (e.g. `length(input.q) > 1.5`).
 
+## [0.2.0](https://github.com/edlontech/dsxir/compare/dsxir-v0.1.0...dsxir-v0.2.0) (2026-05-20)
+
+
+### Features
+
+* add KNNFewShot optimizer for per-call dynamic demo selection ([fc0a058](https://github.com/edlontech/dsxir/commit/fc0a058de24e034a492846f00840716e101ebfa1))
+* add MIPROv2 optimizer with TPE search and grounded proposer ([fc8edea](https://github.com/edlontech/dsxir/commit/fc8edea44e9bb9299b8c818e85a9720086fa6f68))
+* add OptimizerSession with checkpointing, pause/resume, and MIPROv2/BFS retrofit ([b67e2c6](https://github.com/edlontech/dsxir/commit/b67e2c6fdf856fe20ee960b5e0a23b738a701ab2))
+* add runtime programs ([b162b3d](https://github.com/edlontech/dsxir/commit/b162b3d3a3899f492059dd9444b44b4a4e4aae65))
+* **gepa:** add reflective Pareto-frontier optimizer ([0edcd58](https://github.com/edlontech/dsxir/commit/0edcd58dad4263d5179c24c43e573a8d3faa4038))
+* make sycophant optional ([ec2609d](https://github.com/edlontech/dsxir/commit/ec2609def76043cecae02f6fef3d138147f7d531))
+
+
+### Bug Fixes
+
+* **settings:** make run/2 globals override process-local ([c49c0ab](https://github.com/edlontech/dsxir/commit/c49c0ab345f509fa37e156bb3f85c6612a22f5e6))
+
 ## [0.1.0](https://github.com/edlontech/dsxir/compare/dsxir-v0.0.1...dsxir-v0.1.0) (2026-05-13)
 
 
