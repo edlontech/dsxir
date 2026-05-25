@@ -14,7 +14,8 @@ defmodule Dsxir.MixProject do
       deps: deps(),
       dialyzer: dialyzer(),
       aliases: aliases(),
-      docs: docs()
+      docs: docs(),
+      usage_rules: usage_rules()
     ]
   end
 
@@ -33,6 +34,16 @@ defmodule Dsxir.MixProject do
         "coveralls.github": :test,
         "coveralls.html": :test,
         "test.integration": :test
+      ]
+    ]
+  end
+
+  defp usage_rules do
+    [
+      file: "AGENTS.md",
+      usage_rules: [
+        {:spark, link: :markdown},
+        {:igniter, link: :markdown}
       ]
     ]
   end
@@ -159,6 +170,7 @@ defmodule Dsxir.MixProject do
       {:ex_check, "~> 0.16", only: [:dev, :test], runtime: false},
       {:excoveralls, "~> 0.18", only: [:dev, :test]},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
+      {:igniter, "~> 0.6", only: [:dev]},
       {:jason, "~> 1.4"},
       {:mimic, "~> 2.0", only: :test},
       {:mix_audit, ">= 0.0.0", only: [:dev, :test], runtime: false},
@@ -168,7 +180,8 @@ defmodule Dsxir.MixProject do
       {:recode, "~> 0.8", only: [:dev], runtime: false},
       {:spark, "~> 2.7"},
       {:sycophant, "~> 0.4", optional: true},
-      {:tidewave, "~> 0.5", only: :dev, runtime: false}
+      {:tidewave, "~> 0.5", only: :dev, runtime: false},
+      {:usage_rules, "~> 1.1", only: [:dev]}
     ]
   end
 
@@ -180,7 +193,7 @@ defmodule Dsxir.MixProject do
     [
       licenses: ["MIT"],
       links: %{"GitHub" => "https://github.com/edlontech/dsxir"},
-      files: ~w(lib mix.exs README.md CHANGELOG.md LICENSE .formatter.exs)
+      files: ~w(lib mix.exs README.md CHANGELOG.md LICENSE .formatter.exs usage-rules.md)
     ]
   end
 end
