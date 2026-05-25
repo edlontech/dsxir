@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0](https://github.com/edlontech/dsxir/compare/dsxir-v0.2.0...dsxir-v0.3.0) (2026-05-25)
+
+
+### Features
+
+* **copro:** add COPRO optimizer ([c38747a](https://github.com/edlontech/dsxir/commit/c38747a28e174dfcc6de35a42569a9b48fdc2390))
+* **pot:** add Program of Thought and CodeAct predictors ([9dda142](https://github.com/edlontech/dsxir/commit/9dda142cfc22df3edb963384ae3a66fd845b29af))
+
+
+### Bug Fixes
+
+* Improved errors feedback ([dd86ef4](https://github.com/edlontech/dsxir/commit/dd86ef4815e4f738152371fb0e9d8b7091d16bc7))
+
 ## [0.2.0](https://github.com/edlontech/dsxir/compare/dsxir-v0.1.0...dsxir-v0.2.0) (2026-05-20)
 
 ### Features
