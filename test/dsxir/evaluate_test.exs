@@ -197,6 +197,111 @@ defmodule Dsxir.EvaluateTest do
     assert length(lines) == 3
   end
 
+  test "errors.by_module counts the concrete exception structs" do
+    Mimic.stub(Dsxir.LM.Sycophant, :generate_text, fn _c, _msgs, _opts ->
+      {:ok, "no markers", Dsxir.LM.empty_usage()}
+    end)
+
+    Dsxir.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
+      ev = %Evaluate{
+        devset: Enum.map(1..3, &ex("q#{&1}", "ok")),
+        metric: &metric/3,
+        num_threads: 2
+      }
+
+      result = Evaluate.run(ev, Dsxir.Program.new(Prog))
+
+      assert result.errors.count == 3
+      assert Enum.sum(Map.values(result.errors.by_module)) == 3
+
+      assert Enum.all?(Map.keys(result.errors.by_module), fn mod ->
+               function_exported?(mod, :__struct__, 0)
+             end)
+    end)
+  end
+
+  test "errors.samples carries deduped, bounded structs with truncated messages" do
+    Mimic.stub(Dsxir.LM.Sycophant, :generate_text, fn _c, _msgs, _opts ->
+      {:ok, "no markers", Dsxir.LM.empty_usage()}
+    end)
+
+    Dsxir.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
+      ev = %Evaluate{
+        devset: Enum.map(1..12, &ex("q#{&1}", "ok")),
+        metric: &metric/3,
+        num_threads: 4
+      }
+
+      result = Evaluate.run(ev, Dsxir.Program.new(Prog))
+
+      assert result.errors.count == 12
+      # all 12 rows fail identically -> one distinct sample
+      assert [%{module: mod, class: class, message: message}] = result.errors.samples
+      assert is_atom(mod)
+      assert class == :adapter
+      assert is_binary(message)
+      assert String.length(message) <= 500
+    end)
+  end
+
+  @tag :capture_log
+  test "an undefined-function crash in the metric surfaces as Framework.UndefinedFunction" do
+    Mimic.stub(Dsxir.LM.Sycophant, :generate_text, fn _c, _msgs, _opts ->
+      {:ok, "[[ ## a ## ]]\nok", Dsxir.LM.empty_usage()}
+    end)
+
+    # built at runtime so the missing module is not a compile-time reference;
+    # the call still exits with `:undef` at runtime.
+    missing_mod = Module.concat([Dsxir, NoSuchModuleXYZ])
+    undef_metric = fn _e, _p, _t -> missing_mod.score(1, 2) end
+
+    Dsxir.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
+      ev = %Evaluate{devset: [ex("q1", "ok")], metric: undef_metric, num_threads: 1}
+      result = Evaluate.run(ev, Dsxir.Program.new(Prog))
+
+      assert result.errors.count == 1
+      assert %{Dsxir.Errors.Framework.UndefinedFunction => 1} = result.errors.by_module
+
+      assert [%{error: %Dsxir.Errors.Framework.UndefinedFunction{} = err}] = result.results
+      assert err.module == Dsxir.NoSuchModuleXYZ
+      assert err.function == :score
+      assert err.arity == 2
+    end)
+  end
+
+  test "run!/2 raised reason carries the first error sample" do
+    Mimic.stub(Dsxir.LM.Sycophant, :generate_text, fn _c, _msgs, _opts ->
+      {:ok, "no markers", Dsxir.LM.empty_usage()}
+    end)
+
+    Dsxir.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
+      ev = %Evaluate{devset: [ex("q1", "ok")], metric: &metric/3, num_threads: 1}
+
+      err =
+        assert_raise Dsxir.Errors.Framework.PredictorError, fn ->
+          Evaluate.run!(ev, Dsxir.Program.new(Prog))
+        end
+
+      assert {:per_example_errors, 1, _by_class, %{module: _, message: _}} = err.reason
+    end)
+  end
+
+  test "Inspect renders the first error sample on the headline" do
+    Mimic.stub(Dsxir.LM.Sycophant, :generate_text, fn _c, _msgs, _opts ->
+      {:ok, "no markers", Dsxir.LM.empty_usage()}
+    end)
+
+    Dsxir.context([lm: {Dsxir.LM.Sycophant, [model: "stub"]}], fn ->
+      ev = %Evaluate{devset: [ex("q1", "ok")], metric: &metric/3, num_threads: 1}
+      result = Evaluate.run(ev, Dsxir.Program.new(Prog))
+
+      rendered = inspect(result)
+      assert rendered =~ "errors: 1"
+      assert rendered =~ "adapter:"
+      assert rendered =~ "Adapter."
+    end)
+  end
+
   test "run/2 dispatches a runtime-program through Program.forward/2 without crashing" do
     Mimic.stub(Dsxir.LM.Sycophant, :generate_text, fn _c, _msgs, _opts ->
       {:ok, "[[ ## answer ## ]]\nok", Dsxir.LM.empty_usage()}

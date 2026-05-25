@@ -210,14 +210,24 @@ defmodule Dsxir.InspectTest do
       result = %Dsxir.EvaluationResult{
         score: 87.5,
         results: [1, 2, 3, 4],
-        errors: %{count: 1, by_class: %{lm: 1}}
+        errors: %{
+          count: 1,
+          by_class: %{lm: 1},
+          by_module: %{Dsxir.Errors.LM.RequestFailed => 1},
+          samples: [%{module: Dsxir.Errors.LM.RequestFailed, class: :lm, message: "boom"}]
+        }
       }
 
       str = inspect(result)
 
       assert str =~ "#Dsxir.EvaluationResult<score: 87.5"
       assert str =~ "total: 4"
-      assert str =~ "count: 1"
+      assert str =~ "errors: 1 (lm: LM.RequestFailed \"boom\")"
+    end
+
+    test "renders just the count when no sample is present" do
+      result = %Dsxir.EvaluationResult{score: 0.0, results: [1], errors: %{count: 0}}
+      assert inspect(result) =~ "errors: 0"
     end
   end
 

@@ -5,15 +5,27 @@ defmodule Dsxir.EvaluationResult do
     * `:score` — `avg(metric_value) * 100`, rounded to 1 decimal place.
     * `:results` — one row per devset entry, in input order. Successful rows
       carry `metric: float()`; errored rows carry `metric: nil, error: %Exception{}`.
-    * `:errors` — `%{count: non_neg_integer(), by_class: %{atom() => non_neg_integer()}}`.
-      `:by_class` keys are the splode error class atoms (`:adapter`, `:lm`,
-      `:invalid`, `:halted`, `:framework`, `:unknown`).
+    * `:errors` — aggregate failure summary:
+        * `:count` — total errored rows.
+        * `:by_class` — `%{atom() => non_neg_integer()}` keyed by the splode
+          error class atom (`:adapter`, `:lm`, `:invalid`, `:halted`,
+          `:runtime`, `:framework`, `:unknown`). Coarse bucket.
+        * `:by_module` — `%{module() => non_neg_integer()}` keyed by the
+          concrete exception struct, so distinct failures sharing a class
+          are still separable.
+        * `:samples` — up to three distinct error samples (deduped by struct
+          and reason shape), each `%{module, class, message}` with the
+          message truncated to 500 chars. Lets the summary be debugged on
+          its own without re-running.
 
   Subscribers branch on `nil` vs. populated; the `:errors` map is always
-  present, even when zero errors occurred (then `count: 0, by_class: %{}`).
+  present, even when zero errors occurred (then `count: 0` and empty
+  `by_class`, `by_module`, `samples`).
   """
 
-  defstruct score: 0.0, results: [], errors: %{count: 0, by_class: %{}}
+  defstruct score: 0.0,
+            results: [],
+            errors: %{count: 0, by_class: %{}, by_module: %{}, samples: []}
 
   @type row :: %{
           example: Dsxir.Example.t(),
@@ -22,10 +34,19 @@ defmodule Dsxir.EvaluationResult do
           error: nil | Exception.t()
         }
 
+  @type error_sample :: %{module: module(), class: atom(), message: String.t()}
+
+  @type errors :: %{
+          count: non_neg_integer(),
+          by_class: %{atom() => non_neg_integer()},
+          by_module: %{module() => non_neg_integer()},
+          samples: [error_sample()]
+        }
+
   @type t :: %__MODULE__{
           score: float(),
           results: [row()],
-          errors: %{count: non_neg_integer(), by_class: %{atom() => non_neg_integer()}}
+          errors: errors()
         }
 
   @doc "Build a successful row with its example, prediction, and numeric metric."
@@ -57,16 +78,35 @@ defmodule Dsxir.EvaluationResult do
   defimpl Inspect do
     import Inspect.Algebra
 
-    def inspect(%Dsxir.EvaluationResult{} = result, opts) do
+    @headline_message_limit 120
+
+    def inspect(%Dsxir.EvaluationResult{} = result, _opts) do
       concat([
         "#Dsxir.EvaluationResult<score: ",
         Float.to_string(result.score),
         ", total: ",
         Integer.to_string(length(result.results)),
         ", errors: ",
-        to_doc(result.errors, opts),
+        errors_summary(result.errors),
         ">"
       ])
+    end
+
+    defp errors_summary(%{count: 0}), do: "0"
+
+    defp errors_summary(%{count: count, samples: [sample | _]}) do
+      "#{count} (#{sample.class}: #{short_module(sample.module)} #{inspect(headline_message(sample.message))})"
+    end
+
+    defp errors_summary(%{count: count}), do: Integer.to_string(count)
+
+    defp headline_message(message) when byte_size(message) <= @headline_message_limit, do: message
+
+    defp headline_message(message),
+      do: String.slice(message, 0, @headline_message_limit) <> "..."
+
+    defp short_module(module) do
+      module |> Atom.to_string() |> String.replace_prefix("Elixir.Dsxir.Errors.", "")
     end
   end
 end

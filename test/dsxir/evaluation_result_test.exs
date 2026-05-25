@@ -7,7 +7,7 @@ defmodule Dsxir.EvaluationResultTest do
     r = %EvaluationResult{}
     assert r.score == 0.0
     assert r.results == []
-    assert r.errors == %{count: 0, by_class: %{}}
+    assert r.errors == %{count: 0, by_class: %{}, by_module: %{}, samples: []}
   end
 
   test "score_from averages and scales by 100, rounded to 1dp" do

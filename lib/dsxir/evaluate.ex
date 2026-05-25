@@ -113,12 +113,12 @@ defmodule Dsxir.Evaluate do
       %EvaluationResult{errors: %{count: 0}} = ok ->
         ok
 
-      %EvaluationResult{errors: %{count: n, by_class: by_class}} ->
+      %EvaluationResult{errors: %{count: n, by_class: by_class, samples: samples}} ->
         raise %Errors.Framework.PredictorError{
           predictor: __MODULE__,
           signature: nil,
           inner: nil,
-          reason: {:per_example_errors, n, by_class}
+          reason: {:per_example_errors, n, by_class, List.first(samples)}
         }
     end
   end
@@ -171,6 +171,14 @@ defmodule Dsxir.Evaluate do
   defp exit_to_exception({%{__exception__: true} = exception, _stacktrace}), do: exception
   defp exit_to_exception(%{__exception__: true} = exception), do: exception
 
+  defp exit_to_exception({:undef, [{module, function, arity_or_args, _loc} | _]}) do
+    %Errors.Framework.UndefinedFunction{
+      module: module,
+      function: function,
+      arity: arity_of(arity_or_args)
+    }
+  end
+
   defp exit_to_exception(:timeout) do
     %Errors.Framework.PredictorError{
       predictor: __MODULE__,
@@ -189,6 +197,9 @@ defmodule Dsxir.Evaluate do
     }
   end
 
+  defp arity_of(args) when is_list(args), do: length(args)
+  defp arity_of(arity) when is_integer(arity), do: arity
+
   defp telemetry_for(%{error: nil, metric: m, prediction: p, example: e}, duration) do
     {%{duration: duration, metric_value: m}, %{example: e, prediction: p, error_class: nil}}
   end
@@ -205,18 +216,45 @@ defmodule Dsxir.Evaluate do
         %{metric: m} -> m
       end)
 
-    by_class =
-      rows
-      |> Enum.reject(&is_nil(&1.error))
-      |> Enum.map(fn %{error: e} -> Errors.class_of(e) end)
-      |> Enum.frequencies()
-
-    error_count = rows |> Enum.count(&(not is_nil(&1.error)))
+    errors = rows |> Enum.map(& &1.error) |> Enum.reject(&is_nil/1)
 
     %EvaluationResult{
       score: EvaluationResult.score_from(metric_values),
       results: rows,
-      errors: %{count: error_count, by_class: by_class}
+      errors: summarize_errors(errors)
+    }
+  end
+
+  @max_samples 3
+  @sample_message_limit 500
+
+  defp summarize_errors(errors) do
+    %{
+      count: length(errors),
+      by_class: errors |> Enum.map(&Errors.class_of/1) |> Enum.frequencies(),
+      by_module: errors |> Enum.map(& &1.__struct__) |> Enum.frequencies(),
+      samples: build_samples(errors)
+    }
+  end
+
+  defp build_samples(errors) do
+    errors
+    |> Enum.uniq_by(&sample_key/1)
+    |> Enum.take(@max_samples)
+    |> Enum.map(&sample/1)
+  end
+
+  defp sample_key(%{reason: reason} = err), do: {err.__struct__, signature_of(reason)}
+  defp sample_key(err), do: {err.__struct__, nil}
+
+  defp signature_of(reason) when is_tuple(reason) and tuple_size(reason) > 0, do: elem(reason, 0)
+  defp signature_of(reason), do: reason
+
+  defp sample(err) do
+    %{
+      module: err.__struct__,
+      class: Errors.class_of(err),
+      message: err |> Exception.message() |> String.slice(0, @sample_message_limit)
     }
   end
 

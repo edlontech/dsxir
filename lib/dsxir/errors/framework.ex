@@ -46,6 +46,19 @@ defmodule Dsxir.Errors.Framework.CycleDetected do
     do: "framework bug: cycle detected among nodes #{inspect(nodes)}"
 end
 
+defmodule Dsxir.Errors.Framework.UndefinedFunction do
+  @moduledoc """
+  Raised when a worker exits with `:undef` — typically the metric or program
+  module was not loaded in the `Task.Supervisor` worker (a common LiveBook
+  pitfall where the metric cell was not evaluated before the eval cell).
+  """
+  use Splode.Error, fields: [:module, :function, :arity], class: :framework
+
+  def message(%{module: module, function: function, arity: arity}) do
+    "undefined function #{inspect(module)}.#{function}/#{arity} (module not loaded in worker?)"
+  end
+end
+
 defmodule Dsxir.Errors.Framework.GEPAOperatorFailed do
   @moduledoc "Raised when a GEPA reflective operator fails to produce a valid offspring."
   use Splode.Error,

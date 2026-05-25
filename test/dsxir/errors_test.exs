@@ -244,5 +244,20 @@ defmodule Dsxir.ErrorsTest do
       assert msg =~ "invalid metric"
       assert msg =~ ":wat"
     end
+
+    test "Framework.UndefinedFunction" do
+      err = %Dsxir.Errors.Framework.UndefinedFunction{
+        module: MyApp.Metric,
+        function: :score,
+        arity: 3
+      }
+
+      assert Dsxir.Errors.class_of(err) == :framework
+
+      msg = Exception.message(err)
+      assert msg =~ "undefined function"
+      assert msg =~ "MyApp.Metric"
+      assert msg =~ "score/3"
+    end
   end
 end
