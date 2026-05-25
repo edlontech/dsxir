@@ -36,7 +36,9 @@ defmodule Dsxir.Errors do
       Dsxir.Optimizer.KNNFewShot,
       Dsxir.Retrieval.Cosine,
       Dsxir.Optimizer.GEPA,
-      "Dsxir.Optimizer.GEPA."
+      "Dsxir.Optimizer.GEPA.",
+      Dsxir.Optimizer.COPRO,
+      "Dsxir.Optimizer.COPRO."
     ]
 
   @doc """

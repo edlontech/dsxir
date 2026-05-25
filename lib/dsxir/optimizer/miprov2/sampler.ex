@@ -60,4 +60,45 @@ defmodule Dsxir.Optimizer.MIPROv2.Sampler do
           valset: [Dsxir.Example.t()],
           sampler_module: module()
         }
+
+  defimpl Inspect do
+    import Inspect.Algebra
+
+    def inspect(%Dsxir.Optimizer.MIPROv2.Sampler{} = s, opts) do
+      best_score =
+        case s.best_so_far do
+          {score, _program} -> score
+          _ -> nil
+        end
+
+      degraded =
+        case s.proposer_summaries do
+          %{degraded: d} -> d
+          _ -> nil
+        end
+
+      concat([
+        "#Dsxir.Optimizer.MIPROv2.Sampler<trials: ",
+        Integer.to_string(count(s.trial_records)),
+        "/",
+        to_doc(s.total_planned_trials, opts),
+        ", full_evals: ",
+        Integer.to_string(count(s.full_evals)),
+        ", proposer_calls: ",
+        to_doc(s.proposer_calls, opts),
+        ", minibatch: ",
+        Integer.to_string(count(s.minibatch)),
+        ", valset: ",
+        Integer.to_string(count(s.valset)),
+        ", best_score: ",
+        to_doc(best_score, opts),
+        ", degraded: ",
+        to_doc(degraded, opts),
+        ">"
+      ])
+    end
+
+    defp count(list) when is_list(list), do: length(list)
+    defp count(_), do: 0
+  end
 end
