@@ -68,3 +68,20 @@ defmodule Dsxir.Errors.Framework.GEPAOperatorFailed do
   def message(%{operator: op, reason: r}),
     do: "GEPA operator #{inspect(op)} failed: #{inspect(r)}"
 end
+
+defmodule Dsxir.Errors.Framework.CodeExecutionError do
+  @moduledoc """
+  Raised by `Dsxir.Predictor.ProgramOfThought` / `Dsxir.Predictor.CodeAct`
+  when `max_iters` is exhausted without a single successful sandbox run.
+  `type` is the Dune failure type of the last attempt
+  (`:restricted | :memory | :exception | :parsing | :timeout`) or `:max_iters`
+  when attempts failed for differing reasons.
+  """
+  use Splode.Error,
+    fields: [:type, :message, :code, :trajectory],
+    class: :framework
+
+  def message(%{type: type, message: message}) do
+    "code execution failed (#{inspect(type)}): #{message}"
+  end
+end

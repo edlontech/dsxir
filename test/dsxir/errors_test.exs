@@ -65,6 +65,21 @@ defmodule Dsxir.ErrorsTest do
     end
   end
 
+  describe "Framework.CodeExecutionError" do
+    test "carries type, message, code, trajectory and renders a message" do
+      err = %Dsxir.Errors.Framework.CodeExecutionError{
+        type: :max_iters,
+        message: "all attempts failed",
+        code: "x = 1",
+        trajectory: [%{code: "x = 1", error: "boom", ok?: false}]
+      }
+
+      assert Dsxir.Errors.class_of(err) == :framework
+      assert Exception.message(err) =~ "max_iters"
+      assert Exception.message(err) =~ "all attempts failed"
+    end
+  end
+
   describe "message/1 produces readable strings" do
     test "Adapter.ParseError with field" do
       err = %Dsxir.Errors.Adapter.ParseError{

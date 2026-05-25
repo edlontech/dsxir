@@ -38,5 +38,12 @@ defmodule Dsxir.TelemetryTest do
     assert Dsxir.Telemetry.optimizer_item_error() == [:dsxir, :optimizer, :item_error]
     assert Dsxir.Telemetry.evaluate_item() == [:dsxir, :evaluate, :item]
     assert Dsxir.Telemetry.evaluate_stop() == [:dsxir, :evaluate, :stop]
+
+    assert Dsxir.Telemetry.predictor_code_exec_attempt() == [
+             :dsxir,
+             :predictor,
+             :code_exec,
+             :attempt
+           ]
   end
 end

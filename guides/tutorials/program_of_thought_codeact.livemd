@@ -1,0 +1,440 @@
+<!-- livebook:{"persist_outputs":true} -->
+
+# Program of Thought and CodeAct
+
+```elixir
+Mix.install(
+  [
+    {:dsxir, path: Path.expand("../..", __DIR__)},
+    {:sycophant, "~> 0.4"},
+    {:kino, "~> 0.19"}
+  ]
+)
+```
+
+## Overview
+
+Some tasks are answered far more reliably by *running code* than by asking
+the model to do arithmetic or data wrangling in its head.
+`Dsxir.Predictor.ProgramOfThought` (PoT) and `Dsxir.Predictor.CodeAct` cover
+that case: the model writes Elixir, the framework runs it in a sandbox, and
+the model then reads the result back to fill in the signature's typed outputs.
+
+Both predictors share one loop, `Dsxir.Predictor.CodeExec.Engine`:
+
+1. **Generate** — a `ChainOfThought` step writes Elixir against the
+   signature's input variables, which are pre-bound in the sandbox.
+2. **Execute** — `Dsxir.Predictor.CodeExec.Sandbox` runs the code through
+   [Dune](https://hex.pm/packages/dune). The value of the last expression is
+   the result.
+3. **Regenerate** — a failed run (restricted call, timeout, exception, …) is
+   fed back as `previous_code` + `error` for another attempt, up to
+   `:max_iters`.
+4. **Extract** — once a run succeeds, a final `ChainOfThought` step reads the
+   execution result and produces the signature's real outputs.
+
+The difference between the two predictors is one capability:
+
+* **`ProgramOfThought`** runs under Dune's default safe allowlist — pure
+  computation, no side effects, no access to your application.
+* **`CodeAct`** additionally lets generated code call user-provided
+  `Dsxir.Primitives.Tool`s. The generated Elixir stays sandboxed; the tools
+  themselves are trusted and run with full privileges, exactly as
+  `Dsxir.Predictor.ReAct` trusts its tools.
+
+This tutorial assumes you have read the README and are comfortable with
+`Dsxir.Signature`, `Dsxir.Module`, and `Dsxir.context/2`.
+
+When run from a checkout of `dsxir`, `Mix.install/1` above resolves the
+library from the parent directory. If you launch this livebook from
+elsewhere, replace the `path:` line with `{:dsxir, "~> 0.1"}`.
+
+## Configuring the LM
+
+Credentials live in the per-request context, never in `Dsxir.configure/1`.
+We set the architectural defaults once and use a Kino input to keep the API
+key out of the notebook on disk.
+
+```elixir
+Dsxir.configure(
+  lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-4o-mini"]},
+  adapter: Dsxir.Adapter.Chat
+)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
+```elixir
+api_key_input = Kino.Input.password("OPENAI_API_KEY")
+```
+
+```elixir
+lm_frame = fn ->
+  api_key = Kino.Input.read(api_key_input)
+
+  [lm: {Dsxir.LM.Sycophant,
+        [model: "openai:gpt-4o-mini", api_key: api_key, temperature: 0.0]}]
+end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+#Function<43.113135111/0 in :erl_eval.expr/6>
+```
+
+## Program of Thought: a math word problem
+
+The classic motivation for PoT. The model is bad at multi-step arithmetic
+but excellent at *writing* the arithmetic. The signature declares plain
+typed inputs and outputs — nothing about code. PoT injects the
+code-generation machinery for you.
+
+```elixir
+defmodule MyApp.MathWordProblem do
+  use Dsxir.Signature
+
+  signature do
+    instruction """
+    Solve the word problem. Compute the numeric answer exactly.
+    """
+
+    input :problem, :string
+
+    output :answer, :integer, desc: "The final numeric answer."
+  end
+end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+{:module, MyApp.MathWordProblem, <<70, 79, 82, 49, 0, 0, 107, ...>>, ...}
+```
+
+A `Dsxir.Module` wires the predictor to the signature. The `predictor`
+declaration takes the implementation and `signature:`; everything else
+(`max_iters:`, sandbox budgets, and — for CodeAct — `tools:`) is passed as
+**call-time opts** to `call/4` and forwarded to the predictor. `forward/2`
+just makes the call and returns the prediction; the engine handles
+generate/execute/extract.
+
+```elixir
+defmodule MyApp.Solver do
+  use Dsxir.Module
+
+  predictor :solve, Dsxir.Predictor.ProgramOfThought,
+    signature: MyApp.MathWordProblem
+
+  def forward(prog, %{problem: problem}) do
+    call(prog, :solve, %{problem: problem}, max_iters: 3)
+  end
+end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+{:module, MyApp.Solver, <<70, 79, 82, 49, 0, 0, 83, ...>>, ...}
+```
+
+Run it once you have entered an API key above.
+
+```elixir
+problem = """
+A bakery sells croissants in boxes of 6 and muffins in boxes of 4.
+A cafe orders 7 boxes of croissants and 5 boxes of muffins. If 9 of the
+baked goods are returned, how many items does the cafe keep?
+"""
+
+Dsxir.context(lm_frame.(), fn ->
+  prog = Dsxir.Program.new(MyApp.Solver)
+  {_prog, pred} = MyApp.Solver.forward(prog, %{problem: problem})
+
+  %{
+    answer: pred[:answer],
+    generated_code: pred[:generated_code]
+  }
+end)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{
+  generated_code: "total_croissants = 7 * 6\ntotal_muffins = 5 * 4\ntotal_baked_goods = total_croissants + total_muffins\nbaked_goods_kept = total_baked_goods - 9\nbaked_goods_kept",
+  answer: 53
+}
+```
+
+Two things to notice in the prediction:
+
+* `pred[:answer]` is a real integer, validated against the signature — the
+  model read the executed value rather than guessing.
+* `pred[:generated_code]` and `pred[:trajectory]` are *augmented outputs*
+  that every code predictor adds (see
+  `Dsxir.Predictor.ProgramOfThought.augmented_outputs/1`). They are attached
+  alongside your declared fields, not in place of them.
+
+## Inspecting the trajectory
+
+`pred[:trajectory]` is a list, newest-last, of one map per attempt. A
+successful single-shot run has one entry with `ok?: true`; a run that needed
+a retry carries the failed attempts and their Dune error type first.
+
+```elixir
+Dsxir.context(lm_frame.(), fn ->
+  prog = Dsxir.Program.new(MyApp.Solver)
+  {_prog, pred} = MyApp.Solver.forward(prog, %{problem: problem})
+
+  Enum.map(pred[:trajectory], &Map.take(&1, [:ok?, :type]))
+end)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+[%{type: nil, ok?: true}]
+```
+
+When every attempt fails, the engine raises
+`Dsxir.Errors.Framework.CodeExecutionError` carrying the last code, the
+failure `:type`, and the full `:trajectory`, so an exhausted loop fails
+loudly with everything you need to debug the prompt.
+
+## What the sandbox allows — and doesn't
+
+`Dsxir.Predictor.CodeExec.Sandbox` is the only module in dsxir that touches
+Dune. Two limits are worth internalising before you reach for PoT:
+
+* **Inputs are injected by `inspect/1` round-trip.** Each input becomes a
+  bound variable `name = <inspected value>` prepended to the generated code.
+  This works for strings, numbers, atoms, booleans, lists, and plain maps —
+  anything whose `inspect/1` output is valid Elixir source. Structs that
+  inspect to a `#`-sigil form (e.g. `#Dsxir.Primitives.History<...>`), PIDs,
+  references, and functions are **not** usable as PoT/CodeAct inputs.
+* **Only the default safe allowlist runs.** No `File`, no `:os.cmd`, no
+  network. Restricted calls come back as a `:restricted` failure, which the
+  loop treats as regeneration fuel.
+
+The sandbox budget is tunable per predictor via opts forwarded straight to
+Dune. Defaults are 5s wall time and a bounded heap/reduction budget:
+
+```elixir
+# predictor :solve, Dsxir.Predictor.ProgramOfThought,
+#   signature: MyApp.MathWordProblem,
+#   max_iters: 3,
+#   exec_timeout: 2_000,
+#   max_reductions: 10_000_000
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+nil
+```
+
+## CodeAct: letting generated code call your tools
+
+CodeAct is PoT plus a tool dispatcher. You hand it a list of
+`Dsxir.Primitives.Tool` structs; the engine registers them under an
+unguessable token, binds that token inside the sandbox prelude, and tells the
+model it may call them. The generated code reaches a tool through a single
+allowlisted function — everything else stays under the default safe
+allowlist.
+
+A tool is a value: a name, a description (the model reads it), a Zoi schema
+for its arguments, and a 1-arity function. Arguments are validated against the
+schema before the function runs.
+
+```elixir
+inventory = %{
+  "SKU-100" => 42,
+  "SKU-200" => 0,
+  "SKU-300" => 7
+}
+
+stock_tool =
+  Dsxir.Primitives.Tool.new(
+    name: "stock_level",
+    description: "Return the on-hand quantity for a SKU. Args: %{sku: string}.",
+    parameters: Zoi.object(%{sku: Zoi.string()}),
+    function: fn %{sku: sku} -> Map.get(inventory, sku, 0) end
+  )
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+#Dsxir.Primitives.Tool<
+  name: "stock_level",
+  description: "Return the on-hand quantity for a SKU. Args: %{sku: string}.",
+  parameters: #Zoi.map<
+    coerce: false,
+    unrecognized_keys: :strip,
+    fields: %{sku: #Zoi.string<required: true, coerce: false>}
+  >,
+  ...
+>
+```
+
+The function closes over `inventory` here, but in a real system it would hit
+your context module or `Repo`. That privileged work runs *outside* the
+sandbox — the sandbox only sees the dispatcher.
+
+The signature, again, says nothing about code or tools:
+
+```elixir
+defmodule MyApp.RestockQuestion do
+  use Dsxir.Signature
+
+  signature do
+    instruction """
+    Decide how many units to reorder so that every listed SKU reaches the
+    target level. Look up current stock with the available tool.
+    """
+
+    input :skus, {:list, :string}
+    input :target_level, :integer
+
+    output :total_to_reorder, :integer,
+      desc: "Sum across all SKUs of (target - current), floored at 0 per SKU."
+  end
+end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+{:module, MyApp.RestockQuestion, <<70, 79, 82, 49, 0, 0, 125, ...>>, ...}
+```
+
+Declare the predictor as `Dsxir.Predictor.CodeAct` and pass the tools as a
+call-time opt. A module's `forward/2` receives only the program and the
+inputs, so runtime collaborators like tools are built inside it — here the
+inventory lookup lives as a module attribute and a private `stock_tool/0`
+captures it. With no tools CodeAct degrades to plain PoT, so the tool list is
+the whole point.
+
+```elixir
+defmodule MyApp.Restocker do
+  use Dsxir.Module
+
+  @inventory %{"SKU-100" => 42, "SKU-200" => 0, "SKU-300" => 7}
+
+  predictor :plan, Dsxir.Predictor.CodeAct,
+    signature: MyApp.RestockQuestion
+
+  def forward(prog, inputs) do
+    call(prog, :plan, inputs, tools: [stock_tool()], max_iters: 5)
+  end
+
+  defp stock_tool do
+    Dsxir.Primitives.Tool.new(
+      name: "stock_level",
+      description: "Return the on-hand quantity for a SKU. Args: %{sku: string}.",
+      parameters: Zoi.object(%{sku: Zoi.string()}),
+      function: fn %{sku: sku} -> Map.get(@inventory, sku, 0) end
+    )
+  end
+end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+{:module, MyApp.Restocker, <<70, 79, 82, 49, 0, 0, 86, ...>>, ...}
+```
+
+The generated code calls the tool through the fully-qualified dispatcher,
+passing the token that was bound for this call only:
+
+<!-- livebook:{"force_markdown":true} -->
+
+```elixir
+# Representative generated code:
+Enum.reduce(skus, 0, fn sku, acc ->
+  current =
+    Dsxir.Predictor.CodeExec.ToolBridge.call(__dsxir_tools__, "stock_level", %{sku: sku})
+    |> String.to_integer()
+
+  acc + max(target_level - current, 0)
+end)
+```
+
+Tool results arrive in the sandbox as strings (tools are string-coercible),
+so generated code parses them — here with `String.to_integer/1`. Run it:
+
+```elixir
+Dsxir.context(lm_frame.(), fn ->
+  prog = Dsxir.Program.new(MyApp.Restocker)
+
+  {_prog, pred} =
+    MyApp.Restocker.forward(
+      prog,
+      %{skus: ["SKU-100", "SKU-200", "SKU-300"], target_level: 50}
+    )
+
+  %{
+    total_to_reorder: pred[:total_to_reorder],
+    generated_code: pred[:generated_code]
+  }
+end)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{
+  generated_code: "current_stocks = Enum.map(skus, fn sku ->\n  stock = Dsxir.Predictor.CodeExec.ToolBridge.call(__dsxir_tools__, \"stock_level\", %{sku: sku})\n  String.to_integer(stock)\nend)\n\nunits_to_reorder = Enum.map(current_stocks, fn stock ->\n  max(0, target_level - stock)\nend)\n\ntotal_reorder = Enum.sum(units_to_reorder)",
+  total_to_reorder: 101
+}
+```
+
+`(50-42) + (50-0) + (50-7) = 101`. The model never did the arithmetic — it
+queried live stock through your tool and let the VM add it up.
+
+## Notes on tools and safety
+
+* **Tools are trusted; generated code is not.** The sandbox constrains the
+  Elixir the model writes. Whatever a tool's function does runs at full
+  privilege. Treat tool functions exactly like any other code you ship — the
+  model chooses *when* to call them and with *what arguments* (Zoi-validated),
+  not *what they do*.
+* **Per-call isolation.** Each call's tools are keyed by a random token bound
+  only inside that call's sandbox, so one invocation cannot reach another's
+  tools. The engine registers the tools on entry and cleans them up on exit,
+  even when the loop raises.
+* **Custom allowlists must keep the dispatcher.** If you pass your own
+  `:allowlist`, it must still permit
+  `Dsxir.Predictor.CodeExec.ToolBridge.call/3` or every tool call is rejected
+  as `:restricted`.
+
+## Choosing between the code predictors and ReAct
+
+| You want…                                                                | Reach for               |
+| -------------------------------------------------------------------------- | ----------------------- |
+| Deterministic computation the model is bad at (math, parsing, aggregation) | `ProgramOfThought`      |
+| The above, but the code needs live data or effects via your functions      | `CodeAct`               |
+| A step-by-step reason/act loop where the model picks one tool per turn     | `Dsxir.Predictor.ReAct` |
+
+CodeAct and ReAct both expose tools; the difference is shape. ReAct interleaves
+one observation per tool call across many LM turns. CodeAct lets a single
+generated program orchestrate loops, conditionals, and several tool calls
+before returning — fewer round-trips when the control flow is itself the task.
+
+## Where to go next
+
+* PoT and CodeAct are ordinary predictors, so they compile. Run them through
+  `Dsxir.Optimizer.BootstrapFewShot` (see the email extraction tutorial) to
+  bootstrap demos of *successful code* for the generation step.
+* Attach a `[:dsxir, :predictor, :code_exec, :attempt]` telemetry handler to
+  track how often the first generation succeeds versus needing a retry — a
+  direct signal on prompt quality and `:max_iters` sizing.
+* Keep `exec_timeout` tight in production. A runaway generation is bounded by
+  Dune's wall-clock and reduction budgets, and a timeout is just another
+  regeneration attempt rather than a hung request.

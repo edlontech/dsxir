@@ -11,6 +11,7 @@ defmodule Dsxir.Application do
       [
         {Task.Supervisor, name: Dsxir.TaskSupervisor},
         Dsxir.History,
+        Dsxir.Predictor.CodeExec.ToolBridge,
         Dsxir.OptimizerSession.Store.ETS,
         {Registry, keys: :unique, name: Dsxir.OptimizerSession.Registry},
         {DynamicSupervisor,

@@ -99,6 +99,14 @@ carries `completions`, `lm_usage`, and `skipped`.
   `trace_name` **distinct** from any declared predictor name — collision is a
   footgun under bootstrap optimization. Exhausting `max_iters` raises
   `Dsxir.Errors.Framework.PredictorError`.
+- `ProgramOfThought` — generates Elixir code via ChainOfThought, runs it in a
+  sandboxed evaluator, then extracts structured outputs. Exhausting `max_iters`
+  raises `Dsxir.Errors.Framework.CodeExecutionError`. Augments the signature
+  with `:generated_code` and `:trajectory` fields.
+- `CodeAct` — interleaved code-generation and tool-calling loop. Like
+  `ProgramOfThought` but exposes a `:tools` option (same shape as `ReAct`)
+  whose callables are available inside the generated code. Augments with
+  `:generated_code` and `:trajectory`.
 - `Parallel` — `Dsxir.Predictor.Parallel.run/3` runs N calls concurrently and
   returns `{prog, results}`, results in input order as `{:ok, prediction}` /
   `{:error, exception}`. It does not raise; the caller decides.

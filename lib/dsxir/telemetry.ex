@@ -12,6 +12,7 @@ defmodule Dsxir.Telemetry do
       [:dsxir, :predictor, :start]
       [:dsxir, :predictor, :stop]
       [:dsxir, :predictor, :exception]
+      [:dsxir, :predictor, :code_exec, :attempt]
 
       [:dsxir, :adapter, :format]
       [:dsxir, :adapter, :parse]
@@ -104,6 +105,7 @@ defmodule Dsxir.Telemetry do
   @predictor_start [:dsxir, :predictor, :start]
   @predictor_stop [:dsxir, :predictor, :stop]
   @predictor_exception [:dsxir, :predictor, :exception]
+  @predictor_code_exec_attempt [:dsxir, :predictor, :code_exec, :attempt]
 
   @adapter_format [:dsxir, :adapter, :format]
   @adapter_parse [:dsxir, :adapter, :parse]
@@ -133,6 +135,10 @@ defmodule Dsxir.Telemetry do
   @doc "Event name for `[:dsxir, :predictor, :exception]`."
   @spec predictor_exception() :: event()
   def predictor_exception, do: @predictor_exception
+
+  @doc "Event name for `[:dsxir, :predictor, :code_exec, :attempt]`."
+  @spec predictor_code_exec_attempt() :: event()
+  def predictor_code_exec_attempt, do: @predictor_code_exec_attempt
 
   @doc "Event name for `[:dsxir, :adapter, :format]`."
   @spec adapter_format() :: event()

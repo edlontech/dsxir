@@ -62,7 +62,8 @@ defmodule Dsxir.MixProject do
         "guides/runtime_programs.md",
         "guides/tutorials/email_extraction.livemd",
         "guides/tutorials/knn_few_shot.livemd",
-        "guides/tutorials/miprov2.livemd"
+        "guides/tutorials/miprov2.livemd",
+        "guides/tutorials/program_of_thought_codeact.livemd"
       ],
       groups_for_extras: [
         Guides: ~r"guides/[^/]+\.md",
