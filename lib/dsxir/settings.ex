@@ -30,7 +30,8 @@ defmodule Dsxir.Settings do
             cache: true,
             call_plugs: [],
             program_plugs: [],
-            metadata: %{}
+            metadata: %{},
+            hints: %{}
 
   @type t :: %__MODULE__{
           lm: nil | {module(), keyword()},
@@ -39,7 +40,8 @@ defmodule Dsxir.Settings do
           cache: boolean(),
           call_plugs: list(),
           program_plugs: list(),
-          metadata: map()
+          metadata: map(),
+          hints: map()
         }
 
   @globals_key {__MODULE__, :globals}
@@ -56,7 +58,8 @@ defmodule Dsxir.Settings do
       cache: true,
       call_plugs: [],
       program_plugs: [],
-      metadata: %{}
+      metadata: %{},
+      hints: %{}
     }
   end
 
@@ -227,22 +230,24 @@ defmodule Dsxir.Settings do
     @sensitive_keys [:api_key, :token, :password, :secret]
 
     def inspect(%Dsxir.Settings{} = settings, opts) do
-      concat([
-        "#Dsxir.Settings<",
-        to_doc(
-          %{
-            lm: mask_lm(settings.lm),
-            adapter: settings.adapter,
-            callbacks: length(settings.callbacks),
-            cache: settings.cache,
-            call_plugs: length(settings.call_plugs),
-            program_plugs: length(settings.program_plugs),
-            metadata: settings.metadata
-          },
-          opts
-        ),
-        ">"
-      ])
+      base = %{
+        lm: mask_lm(settings.lm),
+        adapter: settings.adapter,
+        callbacks: length(settings.callbacks),
+        cache: settings.cache,
+        call_plugs: length(settings.call_plugs),
+        program_plugs: length(settings.program_plugs),
+        metadata: settings.metadata
+      }
+
+      base =
+        if map_size(settings.hints) > 0 do
+          Map.put(base, :hints, settings.hints)
+        else
+          base
+        end
+
+      concat(["#Dsxir.Settings<", to_doc(base, opts), ">"])
     end
 
     defp mask_lm(nil), do: nil

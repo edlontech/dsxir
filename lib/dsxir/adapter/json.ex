@@ -199,6 +199,8 @@ defmodule Dsxir.Adapter.Json do
         _ -> Runtime.instruction(signature) || ""
       end
 
+    instruction = append_hint(instruction, Keyword.get(opts, :hint))
+
     inputs_doc = render_field_list("Inputs:", Runtime.inputs(signature))
     outputs_doc = render_field_list("Outputs:", Runtime.outputs(signature))
 
@@ -228,6 +230,12 @@ defmodule Dsxir.Adapter.Json do
       "Examples:\n\n#{demo_section}\n\nNow your turn:\n\n#{input_section}"
     end
   end
+
+  defp append_hint(instruction, nil), do: instruction
+  defp append_hint(instruction, ""), do: instruction
+
+  defp append_hint(instruction, hint) when is_binary(hint),
+    do: instruction <> "\n\nFeedback from a previous attempt:\n" <> hint
 
   defp render_field_list(_label, []), do: ""
 

@@ -44,6 +44,15 @@ defmodule Dsxir.Module.Runtime do
         nested_opts = Keyword.put(opts, :path, parent_path ++ [name])
         merged_opts = Keyword.merge(per_call_opts_from_settings(), nested_opts)
 
+        merged_opts =
+          case Settings.resolve(:hints, %{}) do
+            %{^name => hint} when is_binary(hint) and hint != "" ->
+              Keyword.put(merged_opts, :hint, hint)
+
+            _ ->
+              merged_opts
+          end
+
         ctx =
           CallContext.new(
             predictor: name,

@@ -90,6 +90,19 @@ defmodule Dsxir.Adapter.JsonTest do
       assert system_empty.content =~ "Answer the user's question"
     end
 
+    test "system prompt appends the hint when opts[:hint] is set" do
+      [system, _user] =
+        Json.format(AnswerQuestion, %{question: "q"}, [], hint: "be concise")
+
+      assert system.content =~ "Feedback from a previous attempt:"
+      assert system.content =~ "be concise"
+    end
+
+    test "system prompt is unchanged when no hint is given" do
+      [system, _user] = Json.format(AnswerQuestion, %{question: "q"}, [], [])
+      refute system.content =~ "Feedback from a previous attempt:"
+    end
+
     test "raises Invalid.Configuration when :stream is in opts" do
       err =
         assert_raise Dsxir.Errors.Invalid.Configuration, fn ->

@@ -13,6 +13,8 @@ defmodule Dsxir.Telemetry do
       [:dsxir, :predictor, :stop]
       [:dsxir, :predictor, :exception]
       [:dsxir, :predictor, :code_exec, :attempt]
+      [:dsxir, :predictor, :best_of_n | :refine, :attempt]
+      [:dsxir, :predictor, :best_of_n | :refine, :stop]
 
       [:dsxir, :adapter, :format]
       [:dsxir, :adapter, :parse]
@@ -100,6 +102,25 @@ defmodule Dsxir.Telemetry do
   either because a declared guard returned `false` or because an upstream
   required-input dependency was itself skipped. Documented here; produced by
   the executor.
+
+  ## Sampling-predictor events
+
+  `Dsxir.Predictor.BestOfN` and `Dsxir.Predictor.Refine` share the
+  `Dsxir.Predictor.Sampling` core, which emits a parameterized event whose
+  third segment is `:best_of_n` or `:refine`. Build the names via
+  `sampling_attempt/1` and `sampling_stop/1`.
+
+  `[:dsxir, :predictor, :best_of_n | :refine, :attempt]`
+
+    * **Measurements:** `%{reward: nil | number()}`. `nil` on a failed attempt.
+    * **Metadata:** `%{attempt: non_neg_integer(), kept?: boolean(),
+      failed?: boolean(), fed_back?: boolean()}` merged over the resolved
+      `Dsxir.Settings` `:metadata` frame (so tenant metadata propagates).
+
+  `[:dsxir, :predictor, :best_of_n | :refine, :stop]`
+
+    * **Measurements:** `%{best_reward: number()}`.
+    * **Metadata:** the resolved `Dsxir.Settings` `:metadata` frame.
   """
 
   @predictor_start [:dsxir, :predictor, :start]
@@ -139,6 +160,18 @@ defmodule Dsxir.Telemetry do
   @doc "Event name for `[:dsxir, :predictor, :code_exec, :attempt]`."
   @spec predictor_code_exec_attempt() :: event()
   def predictor_code_exec_attempt, do: @predictor_code_exec_attempt
+
+  @doc "Event name for the sampling-predictor `:attempt` event, parameterized by `:best_of_n` or `:refine`."
+  @spec sampling_attempt(:best_of_n | :refine) :: event()
+  def sampling_attempt(kind) when kind in [:best_of_n, :refine] do
+    [:dsxir, :predictor, kind, :attempt]
+  end
+
+  @doc "Event name for the sampling-predictor `:stop` event, parameterized by `:best_of_n` or `:refine`."
+  @spec sampling_stop(:best_of_n | :refine) :: event()
+  def sampling_stop(kind) when kind in [:best_of_n, :refine] do
+    [:dsxir, :predictor, kind, :stop]
+  end
 
   @doc "Event name for `[:dsxir, :adapter, :format]`."
   @spec adapter_format() :: event()

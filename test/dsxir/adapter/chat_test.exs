@@ -89,6 +89,19 @@ defmodule Dsxir.Adapter.ChatTest do
 
       assert system.content =~ "Answer the user's question"
     end
+
+    test "system prompt appends the hint when opts[:hint] is set" do
+      msgs = Chat.format(AnswerQuestion, %{question: "q"}, [], hint: "be concise")
+      system = Enum.find(msgs, &(&1.role == :system)).content
+      assert system =~ "Feedback from a previous attempt:"
+      assert system =~ "be concise"
+    end
+
+    test "system prompt is unchanged when no hint is given" do
+      msgs = Chat.format(AnswerQuestion, %{question: "q"}, [], [])
+      system = Enum.find(msgs, &(&1.role == :system)).content
+      refute system =~ "Feedback from a previous attempt:"
+    end
   end
 
   describe "parse/3" do

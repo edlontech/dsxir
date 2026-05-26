@@ -215,6 +215,31 @@ defmodule Dsxir.SettingsTest do
     end
   end
 
+  describe "hints channel" do
+    test "resolve/2 returns the hints map set in a context frame" do
+      Dsxir.Settings.context([hints: %{answer: "be terse"}], fn ->
+        assert %{answer: "be terse"} = Dsxir.Settings.resolve(:hints, %{})
+      end)
+    end
+
+    test "hints default to an empty map outside any frame" do
+      assert %{} == Dsxir.Settings.resolve(:hints, %{})
+    end
+
+    test "hints propagate into a snapshot replay (Task fan-out)" do
+      Dsxir.Settings.context([hints: %{answer: "x"}], fn ->
+        snap = Dsxir.Settings.snapshot()
+
+        task =
+          Task.async(fn ->
+            Dsxir.Settings.run(snap, fn -> Dsxir.Settings.resolve(:hints, %{}) end)
+          end)
+
+        assert %{answer: "x"} = Task.await(task)
+      end)
+    end
+  end
+
   defp with_persistent_term_put_trace(fun) do
     parent = self()
     ref = make_ref()

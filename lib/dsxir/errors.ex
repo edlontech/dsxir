@@ -38,7 +38,11 @@ defmodule Dsxir.Errors do
       Dsxir.Optimizer.GEPA,
       "Dsxir.Optimizer.GEPA.",
       Dsxir.Optimizer.COPRO,
-      "Dsxir.Optimizer.COPRO."
+      "Dsxir.Optimizer.COPRO.",
+      Dsxir.Predictor.BestOfN,
+      Dsxir.Predictor.Refine,
+      "Dsxir.Predictor.Refine.",
+      Dsxir.Predictor.Sampling
     ]
 
   @doc """
