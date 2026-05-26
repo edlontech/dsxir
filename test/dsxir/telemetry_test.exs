@@ -1,6 +1,7 @@
 defmodule Dsxir.TelemetryTest do
   use ExUnit.Case, async: true
 
+  alias Dsxir.Telemetry
   alias Dsxir.Test.TelemetryHandler
 
   test "emit/3 fires :telemetry.execute on the documented event name" do
@@ -45,5 +46,10 @@ defmodule Dsxir.TelemetryTest do
              :code_exec,
              :attempt
            ]
+  end
+
+  test "ensemble event-name helpers" do
+    assert Telemetry.ensemble_member() == [:dsxir, :predictor, :ensemble, :member]
+    assert Telemetry.ensemble_stop() == [:dsxir, :predictor, :ensemble, :stop]
   end
 end

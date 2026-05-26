@@ -42,7 +42,9 @@ defmodule Dsxir.Errors do
       Dsxir.Predictor.BestOfN,
       Dsxir.Predictor.Refine,
       "Dsxir.Predictor.Refine.",
-      Dsxir.Predictor.Sampling
+      Dsxir.Predictor.Sampling,
+      Dsxir.Predictor.MultiChainComparison,
+      Dsxir.Predictor.Ensemble
     ]
 
   @doc """

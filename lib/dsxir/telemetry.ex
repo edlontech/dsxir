@@ -15,6 +15,8 @@ defmodule Dsxir.Telemetry do
       [:dsxir, :predictor, :code_exec, :attempt]
       [:dsxir, :predictor, :best_of_n | :refine, :attempt]
       [:dsxir, :predictor, :best_of_n | :refine, :stop]
+      [:dsxir, :predictor, :ensemble, :member]
+      [:dsxir, :predictor, :ensemble, :stop]
 
       [:dsxir, :adapter, :format]
       [:dsxir, :adapter, :parse]
@@ -127,6 +129,8 @@ defmodule Dsxir.Telemetry do
   @predictor_stop [:dsxir, :predictor, :stop]
   @predictor_exception [:dsxir, :predictor, :exception]
   @predictor_code_exec_attempt [:dsxir, :predictor, :code_exec, :attempt]
+  @ensemble_member [:dsxir, :predictor, :ensemble, :member]
+  @ensemble_stop [:dsxir, :predictor, :ensemble, :stop]
 
   @adapter_format [:dsxir, :adapter, :format]
   @adapter_parse [:dsxir, :adapter, :parse]
@@ -160,6 +164,14 @@ defmodule Dsxir.Telemetry do
   @doc "Event name for `[:dsxir, :predictor, :code_exec, :attempt]`."
   @spec predictor_code_exec_attempt() :: event()
   def predictor_code_exec_attempt, do: @predictor_code_exec_attempt
+
+  @doc "Event name for `[:dsxir, :predictor, :ensemble, :member]` (one per ensembled program)."
+  @spec ensemble_member() :: event()
+  def ensemble_member, do: @ensemble_member
+
+  @doc "Event name for `[:dsxir, :predictor, :ensemble, :stop]` (one per Ensemble.run/3)."
+  @spec ensemble_stop() :: event()
+  def ensemble_stop, do: @ensemble_stop
 
   @doc "Event name for the sampling-predictor `:attempt` event, parameterized by `:best_of_n` or `:refine`."
   @spec sampling_attempt(:best_of_n | :refine) :: event()
