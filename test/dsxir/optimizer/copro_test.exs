@@ -283,6 +283,7 @@ defmodule Dsxir.Optimizer.COPROTest do
 
   describe "real LM" do
     @tag :integration
+    @tag timeout: 300_000
     test "auto: :light COPRO terminates cleanly against Sycophant" do
       trainset = [
         ex("What is 2+2?", "4"),

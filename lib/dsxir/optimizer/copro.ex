@@ -34,6 +34,8 @@ defmodule Dsxir.Optimizer.COPRO do
     * `:auto` (default `:medium`) — budget preset.
     * `:proposer_lm` — `{module, config}` tuple for instruction proposals.
       Defaults to the resolved task LM.
+    * `:num_threads` — eval-set fan-out for whole-program scoring. Defaults to
+      `System.schedulers_online/0`.
 
   ## Returned stats
 
@@ -101,8 +103,8 @@ defmodule Dsxir.Optimizer.COPRO do
     )
 
     result = do_compile(student, trainset, metric, opts)
-    breadth = Auto.expand(opts, opts[:auto] || :medium).breadth
-    finalize(result, student, metric, start, breadth)
+    cfg = Auto.expand(opts, opts[:auto] || :medium)
+    finalize(result, student, metric, start, cfg)
   end
 
   @doc """
@@ -139,10 +141,10 @@ defmodule Dsxir.Optimizer.COPRO do
     end
   end
 
-  defp finalize({:ok, compiled, %Sampler{} = sampler}, student, metric, start, breadth) do
+  defp finalize({:ok, compiled, %Sampler{} = sampler}, student, metric, start, cfg) do
     elapsed = System.monotonic_time(:millisecond) - start
-    {best_score, sampler} = confirm_best_score(sampler, student, metric)
-    stats = build_stats(sampler, best_score, elapsed, breadth)
+    {best_score, sampler} = confirm_best_score(sampler, student, metric, cfg)
+    stats = build_stats(sampler, best_score, elapsed, cfg.breadth)
 
     Telemetry.emit(
       Telemetry.optimizer_stop(),
@@ -153,7 +155,7 @@ defmodule Dsxir.Optimizer.COPRO do
     {:ok, stamp_metadata(compiled, stats), stats}
   end
 
-  defp finalize({:error, exception} = err, _student, _metric, start, _breadth) do
+  defp finalize({:error, exception} = err, _student, _metric, start, _cfg) do
     elapsed = System.monotonic_time(:millisecond) - start
 
     Telemetry.emit(
@@ -468,9 +470,9 @@ defmodule Dsxir.Optimizer.COPRO do
     %{program | predictors: new_predictors}
   end
 
-  defp confirm_best_score(%Sampler{} = sampler, student, metric) do
+  defp confirm_best_score(%Sampler{} = sampler, student, metric, cfg) do
     program = apply_overrides(student, sampler.best_overrides)
-    {:ok, score, _errors} = Evaluator.run(program, sampler.evalset, metric, %{})
+    {:ok, score, _errors} = Evaluator.run(program, sampler.evalset, metric, cfg)
     {score, %{sampler | best_score: score}}
   end
 

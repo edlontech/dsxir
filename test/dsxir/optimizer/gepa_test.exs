@@ -149,6 +149,7 @@ defmodule Dsxir.Optimizer.GEPATest do
   end
 
   @tag :integration
+  @tag timeout: 300_000
   test "5-trial GEPA against real Sycophant terminates cleanly" do
     program = Dsxir.Program.new(GepaProbe)
 
@@ -169,12 +170,17 @@ defmodule Dsxir.Optimizer.GEPATest do
       }
     end
 
-    assert {:ok, _compiled, stats} =
-             Dsxir.Optimizer.GEPA.compile(program, trainset, metric,
-               auto: :light,
-               num_trials: 5
-             )
+    lm = {Dsxir.LM.Sycophant, [model: "openai:gpt-4o-mini"]}
 
+    result =
+      Dsxir.context([lm: lm], fn ->
+        Dsxir.Optimizer.GEPA.compile(program, trainset, metric,
+          auto: :light,
+          num_trials: 5
+        )
+      end)
+
+    assert {:ok, _compiled, stats} = result
     assert is_float(stats.best_score)
     refute Enum.any?(stats.trials, fn t -> Map.get(t, :error_class) == :framework end)
   end

@@ -19,11 +19,16 @@ defmodule Dsxir.Optimizer.COPRO.Auto do
   @doc """
   Merge user opts over the chosen preset. User-supplied keys override preset
   values; preset values fill in only when the user didn't set the key.
+
+  `:num_threads` is not part of a budget preset (it's a runtime concurrency
+  knob, not an optimization-quality dial), so it defaults to
+  `System.schedulers_online/0` unless the caller overrides it.
   """
   @spec expand(keyword(), preset()) :: map()
   def expand(opts, level) when is_list(opts) and level in [:light, :medium, :heavy] do
     level
     |> preset()
-    |> Map.merge(Map.new(Keyword.take(opts, [:breadth, :depth, :init_temperature])))
+    |> Map.merge(Map.new(Keyword.take(opts, [:breadth, :depth, :init_temperature, :num_threads])))
+    |> Map.put_new(:num_threads, System.schedulers_online())
   end
 end
