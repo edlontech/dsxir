@@ -59,6 +59,11 @@ defmodule Dsxir.MixProject do
       main: "Dsxir",
       extras: [
         "README.md",
+        "guides/signatures_and_modules.md",
+        "guides/inference_wrappers.md",
+        "guides/optimizers.md",
+        "guides/multi_tenant.md",
+        "guides/telemetry.md",
         "guides/runtime_programs.md",
         "guides/tutorials/email_extraction.livemd",
         "guides/tutorials/knn_few_shot.livemd",

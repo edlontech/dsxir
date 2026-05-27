@@ -1,6 +1,6 @@
 defmodule Dsxir.Optimizer.GEPA.Stats do
   @moduledoc """
-  Open-map result for `Dsxir.Optimizer.GEPA.compile/4`. New optimizer keys land
+  Open-map result for `Dsxir.Optimizer.GEPA`. New optimizer keys land
   alongside without versioning.
   """
 

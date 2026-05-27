@@ -177,7 +177,7 @@ Two things to notice in the prediction:
   model read the executed value rather than guessing.
 * `pred[:generated_code]` and `pred[:trajectory]` are *augmented outputs*
   that every code predictor adds (see
-  `Dsxir.Predictor.ProgramOfThought.augmented_outputs/1`). They are attached
+  `c:Dsxir.Predictor.augmented_outputs/1`). They are attached
   alongside your declared fields, not in place of them.
 
 ## Inspecting the trajectory

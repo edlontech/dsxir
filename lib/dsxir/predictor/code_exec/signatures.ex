@@ -1,7 +1,7 @@
 defmodule Dsxir.Predictor.CodeExec.Signatures do
   @moduledoc """
   Builds the three synthetic signatures the engine drives, the same way
-  `Dsxir.Predictor.ChainOfThought.augment/1` builds its reasoning-augmented
+  `Dsxir.Predictor.ChainOfThought` builds its reasoning-augmented
   signature. All three are `%Dsxir.Signature.Compiled{}`.
 
   All three builders take the user's **original** signature (a signature module
