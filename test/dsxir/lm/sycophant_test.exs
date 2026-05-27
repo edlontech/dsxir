@@ -112,6 +112,38 @@ defmodule Dsxir.LM.SycophantTest do
     )
   end
 
+  test "generate_text/3 never forwards Dsxir settings keys to Sycophant" do
+    expect(Sycophant, :generate_text, fn _model, _msgs, opts ->
+      for key <- [:lm, :callbacks, :call_plugs, :program_plugs, :metadata, :hints] do
+        refute Keyword.has_key?(opts, key), "leaked #{inspect(key)} to Sycophant: #{inspect(opts)}"
+      end
+
+      assert opts[:temperature] == 0.5
+      {:ok, %Sycophant.Response{text: "ok", context: %Sycophant.Context{messages: []}}}
+    end)
+
+    Impl.generate_text(
+      [model: "m", lm: {Impl, []}, metadata: %{tenant: "t"}, temperature: 0.5],
+      [],
+      hints: %{answer: "x"}, callbacks: []
+    )
+  end
+
+  test "generate_object/4 never forwards Dsxir settings keys to Sycophant" do
+    expect(Sycophant, :generate_object, fn _model, _msgs, _schema, opts ->
+      refute Keyword.has_key?(opts, :lm)
+      refute Keyword.has_key?(opts, :hints)
+      {:ok, %Sycophant.Response{object: %{a: 1}, context: %Sycophant.Context{messages: []}}}
+    end)
+
+    Impl.generate_object(
+      [model: "m", lm: {Impl, []}],
+      [],
+      Zoi.map(%{}),
+      hints: %{answer: "x"}
+    )
+  end
+
   test "translates AuthenticationFailed to Dsxir.Errors.LM.Authentication" do
     err = %Sycophant.Error.Provider.AuthenticationFailed{status: 401, body: "nope"}
 

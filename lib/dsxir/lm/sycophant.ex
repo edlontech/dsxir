@@ -12,7 +12,9 @@ if Code.ensure_loaded?(Sycophant) do
          top_p: float, num_retries: integer]
 
     Unknown config keys pass through to Sycophant; Sycophant validates them
-    against the resolved wire protocol's param schema.
+    against the resolved wire protocol's param schema. Dsxir's own settings keys
+    (`:lm`, `:adapter`, `:cache`, `:metadata`, `:hints`, ...) are stripped first,
+    so a polluted config never makes the wire protocol warn about them.
 
     Per-call opts override per-config opts via `Keyword.merge/2`. `api_key` and
     `base_url` are lifted into `credentials: %{...}` for Sycophant. The `:headers`
@@ -153,7 +155,25 @@ if Code.ensure_loaded?(Sycophant) do
       end
     end
 
-    @dsxir_internal_opts [:path, :adapter, :cache, :_dsxir_nonce, :degraded, :hint]
+    # Dsxir's own settings keys (see Dsxir.Settings.default_globals/0) and
+    # per-call markers. None describe a provider parameter, so they are stripped
+    # before reaching Sycophant — otherwise a config carrying e.g. :lm makes the
+    # wire protocol warn about an unsupported param.
+    @dsxir_internal_opts [
+      :path,
+      :adapter,
+      :cache,
+      :_dsxir_nonce,
+      :_cost_scope,
+      :degraded,
+      :hint,
+      :lm,
+      :callbacks,
+      :call_plugs,
+      :program_plugs,
+      :metadata,
+      :hints
+    ]
     @credential_opts [:api_key, :base_url, :headers]
 
     defp build_sycophant_opts(config, opts) do
