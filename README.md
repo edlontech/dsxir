@@ -79,6 +79,10 @@ pred[:answer]
   inbox, then compile a few-shot version with
   `Dsxir.Optimizer.BootstrapFewShot`. Livebook: `livebook server
   guides/tutorials/email_extraction.livemd` from a checkout.
+- [Inference-time Wrappers](guides/tutorials/inference_time_wrappers.livemd)
+  — trade per-call budget for reliability with `BestOfN`, `Refine`,
+  `Ensemble`, and `MultiChainComparison`, worked over a single
+  Cognitive-Reflection-Test question.
 
 ## Comparing to DSPy
 
