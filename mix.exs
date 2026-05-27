@@ -65,6 +65,7 @@ defmodule Dsxir.MixProject do
         "guides/multi_tenant.md",
         "guides/telemetry.md",
         "guides/runtime_programs.md",
+        "guides/tutorials/cost_tracking.livemd",
         "guides/tutorials/email_extraction.livemd",
         "guides/tutorials/knn_few_shot.livemd",
         "guides/tutorials/miprov2.livemd",

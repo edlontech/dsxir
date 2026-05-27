@@ -1,0 +1,584 @@
+<!-- livebook:{"persist_outputs":true} -->
+
+# Cost Tracking: Cost, track/1, and inspect_history
+
+```elixir
+Mix.install(
+  [
+    {:dsxir, path: Path.expand("../..", __DIR__)},
+    {:sycophant, "~> 0.4"},
+    {:kino, "~> 0.19"}
+  ]
+)
+```
+
+## Overview
+
+Every LM call dsxir makes carries a price: tokens in, tokens out, and —
+when the provider reports it — a money cost. dsxir surfaces this through
+one value type, `Dsxir.Cost`, and three ways to read it:
+
+| You want                              | Use                                        |
+| ------------------------------------- | ------------------------------------------ |
+| the cost of a single predictor call   | `prediction.lm_usage`                      |
+| the total cost of a block of work     | `Dsxir.Cost.track/1`                       |
+| an after-the-fact log of recent calls | `Dsxir.History` (`inspect_history`)        |
+| to feed your own dashboard / billing  | telemetry on `[:dsxir, :predictor, :stop]` |
+
+`Dsxir.Cost` is provider-independent: the mapping from a specific
+provider's usage struct into a `Dsxir.Cost` lives in the `Dsxir.LM`
+implementation, not in the value type. That means the same aggregation
+code works whether you are on OpenAI, Anthropic, or a local model.
+
+When run from a checkout of `dsxir`, `Mix.install/1` above resolves the
+library from the parent directory. If you launch this livebook from
+elsewhere, replace the `path:` line with the dsxir version.
+
+## The Cost struct
+
+A `Dsxir.Cost` is a flat breakdown of one call's usage, or — after
+aggregation — of many calls.
+
+```elixir
+alias Dsxir.Cost
+
+Cost.zero()
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+#Dsxir.Cost<%{calls: 0}>
+```
+
+The fields:
+
+| Field                                                                                     | Meaning                                                      |
+| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `:input_tokens`, `:output_tokens`                                                         | prompt and completion token counts                           |
+| `:cache_read_tokens`, `:cache_write_tokens`                                               | prompt-cache hits and writes, when the provider reports them |
+| `:reasoning_tokens`                                                                       | hidden reasoning tokens (e.g. on reasoning models)           |
+| `:input_cost`, `:output_cost`, `:cache_read_cost`, `:cache_write_cost`, `:reasoning_cost` | per-bucket money cost                                        |
+| `:total_cost`                                                                             | the sum the provider charged                                 |
+| `:currency`                                                                               | currency string, e.g. `"USD"`                                |
+| `:calls`                                                                                  | `1` for a single call, `N` after aggregation                 |
+
+The key invariant: **`nil` is distinct from `0`.** A `nil` token field
+means the provider did not report that bucket; a `0` means it reported
+zero. Aggregation preserves this — a field that is `nil` in every call
+stays `nil` rather than collapsing to `0`.
+
+`Dsxir.Cost.zero/0` is the additive identity: every numeric field `nil`,
+`calls: 0`. It is what `track/1` and `sum/1` seed with.
+
+The `Inspect` output is deliberately compact — it shows only the
+populated token fields, the total cost, and the call count, hiding the
+per-bucket costs and currency:
+
+```elixir
+%Cost{input_tokens: 1200, output_tokens: 340, total_cost: 0.0021, calls: 1}
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+#Dsxir.Cost<%{in: 1200, out: 340, cost: 0.0021, calls: 1}>
+```
+
+## Configuring the LM
+
+```elixir
+api_key_input = Kino.Input.password("OPENAI_API_KEY")
+```
+
+```elixir
+lm_frame = fn ->
+  api_key = Kino.Input.read(api_key_input)
+
+  [lm: {Dsxir.LM.Sycophant,
+        [model: "openai:gpt-4o-mini", api_key: api_key, temperature: 0.0]}]
+end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+#Function<43.113135111/0 in :erl_eval.expr/6>
+```
+
+A tiny program to spend tokens on. One `ChainOfThought` predictor that
+answers a question.
+
+```elixir
+defmodule CostDemo.QA do
+  use Dsxir.Signature
+
+  signature do
+    instruction "Answer the question in a single, short sentence."
+
+    input :question, :string
+    output :answer, :string
+  end
+end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+{:module, CostDemo.QA, <<70, 79, 82, 49, 0, 0, 105, ...>>, ...}
+```
+
+```elixir
+defmodule CostDemo.Program do
+  use Dsxir.Module
+
+  predictor :qa, Dsxir.Predictor.ChainOfThought, signature: CostDemo.QA
+
+  def forward(prog, %{question: q}) do
+    call(prog, :qa, %{question: q})
+  end
+end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+{:module, CostDemo.Program, <<70, 79, 82, 49, 0, 0, 83, ...>>, ...}
+```
+
+## Per-call cost: lm_usage
+
+Every `Dsxir.Prediction` returned from a predictor call carries the cost
+of that call in its `:lm_usage` field. Run this once you have entered an
+API key above.
+
+```elixir
+Dsxir.context(lm_frame.(), fn ->
+  prog = Dsxir.Program.new(CostDemo.Program)
+  {_prog, pred} = CostDemo.Program.forward(prog, %{question: "What is the capital of France?"})
+
+  %{answer: pred[:answer], usage: pred.lm_usage}
+end)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{usage: #Dsxir.Cost<%{in: 118, out: 50, reasoning: 0, cost: 4.77e-5, calls: 1}>, answer: "Paris"}
+```
+
+`pred.lm_usage` is a `%Dsxir.Cost{}` for that single call (`calls: 1`).
+Token counts are populated when the provider reported usage; `total_cost`
+is populated only when the LM implementation has pricing data for the
+model. If a field reads `nil`, that is "not reported", not "free".
+
+## Aggregating a whole run: track/1
+
+Reading `lm_usage` works for one call, but a real program makes many — a
+`ChainOfThought` step, a retrieval embedding, a fan-out across examples.
+`Dsxir.Cost.track/1` runs a function and hands you back both its result
+and the **summed cost of every LM call made inside the block**:
+
+```elixir
+Dsxir.context(lm_frame.(), fn ->
+  {answers, total} =
+    Cost.track(fn ->
+      prog = Dsxir.Program.new(CostDemo.Program)
+
+      ["What is 2+2?", "Who wrote Hamlet?", "What color is the sky?"]
+      |> Enum.map(fn q ->
+        {_prog, pred} = CostDemo.Program.forward(prog, %{question: q})
+        pred[:answer]
+      end)
+    end)
+
+  %{answers: answers, total_cost: total}
+end)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{
+  total_cost: #Dsxir.Cost<%{in: 350, out: 191, reasoning: 0, cost: 1.671e-4, calls: 3}>,
+  answers: ["4", "William Shakespeare", "The sky is typically blue during the day."]
+}
+```
+
+`total` is a single `Dsxir.Cost` with `calls` equal to the number of
+predictor (and embedding) calls in the block, and every token/cost field
+summed. It captures both `[:dsxir, :predictor, :stop]` and
+`[:dsxir, :lm, :embed, :stop]` events, so retrieval-augmented programs
+account for their embedding spend too.
+
+### Tracking across fan-out workers
+
+`track/1` does not just watch the calling process. It pushes a scope id
+onto the `Dsxir.Settings` stack, which propagates to workers that replay
+the settings snapshot (`Dsxir.Settings.run/2`) — the same mechanism
+`Dsxir.Predictor.Parallel` and `Task.async_stream`-based fan-out use. So
+costs from concurrent workers are folded into the same total:
+
+```elixir
+Dsxir.context(lm_frame.(), fn ->
+  {_results, total} =
+    Cost.track(fn ->
+      snapshot = Dsxir.Settings.snapshot()
+      prog = Dsxir.Program.new(CostDemo.Program)
+
+      ["What is 10 * 10?", "Name a primary color.", "What is the boiling point of water in C?"]
+      |> Task.async_stream(
+        fn q ->
+          Dsxir.Settings.run(snapshot, fn ->
+            {_prog, pred} = CostDemo.Program.forward(prog, %{question: q})
+            pred[:answer]
+          end)
+        end,
+        timeout: :infinity
+      )
+      |> Enum.map(fn {:ok, answer} -> answer end)
+    end)
+
+  total
+end)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+#Dsxir.Cost<%{in: 356, out: 147, reasoning: 0, cost: 1.416e-4, calls: 3}>
+```
+
+`track/1` blocks are safe to nest: an inner block captures only its own
+calls, and the outer total still includes them. It also tears down its
+telemetry handler and ETS table even if the block raises — you get the
+partial cost back via the exception path, never a leaked handler.
+
+## Combining costs by hand
+
+`track/1` is built on three pure helpers you can use directly when you
+have `Dsxir.Cost` values from elsewhere (stored, returned from
+`lm_usage`, etc.):
+
+```elixir
+a = %Cost{input_tokens: 10, output_tokens: 5, total_cost: 0.001, currency: "USD", calls: 1}
+b = %Cost{input_tokens: 20, output_tokens: 7, total_cost: 0.002, currency: "USD", calls: 1}
+
+Cost.merge(a, b)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+#Dsxir.Cost<%{in: 30, out: 12, cost: 0.003, calls: 2}>
+```
+
+`merge/2` is field-wise addition with `nil` as the identity per field;
+`calls` always adds, and the first non-`nil` `currency` wins. `sum/1`
+folds a list the same way, seeded with `zero/0`:
+
+```elixir
+Cost.sum([
+  %Cost{input_tokens: 10, total_cost: 0.001, calls: 1},
+  %Cost{input_tokens: 20, total_cost: 0.002, calls: 1},
+  %Cost{input_tokens: 5, total_cost: 0.0005, calls: 1}
+])
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+#Dsxir.Cost<%{in: 35, cost: 0.0035, calls: 3}>
+```
+
+Because `nil` is the identity, mixing reported and unreported buckets
+does the sane thing: a bucket reported by some calls and not others sums
+the reported ones; a bucket reported by none stays `nil`.
+
+## Inspecting recent history
+
+`Dsxir.History` is the developer tool behind a DSPy-style
+`inspect_history`. It is a supervised owner of an ETS table that records
+one row per LM call, trimmed to a configurable window
+(`:max_history_size`, default `10_000`). It is **off by default** — turn
+it on with `enable/0`:
+
+```elixir
+Dsxir.History.enable()
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
+Now make a few calls, then read them back newest-first:
+
+```elixir
+Dsxir.context(lm_frame.(), fn ->
+  prog = Dsxir.Program.new(CostDemo.Program)
+
+  for q <- ["Define entropy.", "What is a monad?"] do
+    {_prog, _pred} = CostDemo.Program.forward(prog, %{question: q})
+  end
+end)
+
+Dsxir.History.last(2)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+[
+  %{
+    signature: #Dsxir.Signature.Compiled<question -> reasoning, answer>,
+    metadata: %{},
+    source: :predictor,
+    adapter: Dsxir.Adapter.Chat,
+    cache_read_tokens: nil,
+    cache_write_tokens: nil,
+    reasoning_tokens: 0,
+    cost: 8.835e-5,
+    tokens_in: 117,
+    tokens_out: 118,
+    predictor: Dsxir.Predictor.Predict,
+    duration: 1941790333,
+    prediction: #Dsxir.Prediction<
+      reasoning: "A monad is a design pattern used in functional programming to handle computations as a series of steps, encapsulating values and providing a way to chain operations while managing side effects. It consists of three main components: a type constructor, a unit function (or return), and a bind function (or flatMap), which together allow for the sequencing of operations in a consistent manner.",
+      answer: "A monad is a design pattern in functional programming that encapsulates computations and manages side effects through a type constructor, a unit function, and a bind function."
+    >,
+    model: nil,
+    cost_breakdown: #Dsxir.Cost<%{in: 117, out: 118, reasoning: 0, cost: 8.835e-5, calls: 1}>,
+    occurred_at: 1779876843077191
+  },
+  %{
+    signature: #Dsxir.Signature.Compiled<question -> reasoning, answer>,
+    metadata: %{},
+    source: :predictor,
+    adapter: Dsxir.Adapter.Chat,
+    cache_read_tokens: nil,
+    cache_write_tokens: nil,
+    reasoning_tokens: 0,
+    cost: 8.91e-5,
+    tokens_in: 114,
+    tokens_out: 120,
+    predictor: Dsxir.Predictor.Predict,
+    duration: 2129844875,
+    prediction: #Dsxir.Prediction<
+      reasoning: "Entropy is a measure of the disorder or randomness in a system, often associated with the amount of information that is missing from our knowledge of the complete microstate of the system. In thermodynamics, it quantifies the energy in a physical system that is not available to do work. In information theory, it represents the average amount of information produced by a stochastic source of data. Thus, entropy can be understood in both physical and informational contexts.",
+      answer: "Entropy is a measure of disorder or randomness in a system, reflecting the amount of unavailable energy or information."
+    >,
+    model: nil,
+    cost_breakdown: #Dsxir.Cost<%{in: 114, out: 120, reasoning: 0, cost: 8.91e-5, calls: 1}>,
+    occurred_at: 1779876841134987
+  }
+]
+```
+
+Each row carries the flat token measurements (`tokens_in`, `tokens_out`,
+the cache/reasoning breakdown), a `cost` (the `total_cost` float), and a
+`cost_breakdown` (the full `%Dsxir.Cost{}` struct) — plus `source`
+(`:predictor` or `:embed`), the `predictor`, `signature`, `adapter`, the
+`prediction`, the `model` (for embeds), `duration`, and any extra
+telemetry `metadata`.
+
+Pull just the cost-relevant columns:
+
+```elixir
+Dsxir.History.last(5)
+|> Enum.map(fn row ->
+  %{source: row.source, tokens_in: row.tokens_in, tokens_out: row.tokens_out, cost: row.cost}
+end)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+[
+  %{source: :predictor, cost: 8.835e-5, tokens_in: 117, tokens_out: 118},
+  %{source: :predictor, cost: 8.91e-5, tokens_in: 114, tokens_out: 120}
+]
+```
+
+To total the cost across the recorded window, fold the `cost_breakdown`
+structs through `sum/1`:
+
+```elixir
+Dsxir.History.last(100)
+|> Enum.map(& &1.cost_breakdown)
+|> Enum.reject(&is_nil/1)
+|> Cost.sum()
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+#Dsxir.Cost<%{in: 231, out: 238, reasoning: 0, cost: 1.7745e-4, calls: 2}>
+```
+
+You can also dump rows to disk for offline inspection — one
+JSON-encoded entry per line. The `prediction` field is rendered through
+`inspect/1` so structs containing functions or PIDs do not break
+encoding:
+
+```elixir
+Dsxir.History.last(50, file: Path.join(System.tmp_dir!(), "dsxir_history.jsonl"))
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+[
+  %{
+    signature: #Dsxir.Signature.Compiled<question -> reasoning, answer>,
+    metadata: %{},
+    source: :predictor,
+    adapter: Dsxir.Adapter.Chat,
+    cache_read_tokens: nil,
+    cache_write_tokens: nil,
+    reasoning_tokens: 0,
+    cost: 8.835e-5,
+    tokens_in: 117,
+    tokens_out: 118,
+    predictor: Dsxir.Predictor.Predict,
+    duration: 1941790333,
+    prediction: #Dsxir.Prediction<
+      reasoning: "A monad is a design pattern used in functional programming to handle computations as a series of steps, encapsulating values and providing a way to chain operations while managing side effects. It consists of three main components: a type constructor, a unit function (or return), and a bind function (or flatMap), which together allow for the sequencing of operations in a consistent manner.",
+      answer: "A monad is a design pattern in functional programming that encapsulates computations and manages side effects through a type constructor, a unit function, and a bind function."
+    >,
+    model: nil,
+    cost_breakdown: #Dsxir.Cost<%{in: 117, out: 118, reasoning: 0, cost: 8.835e-5, calls: 1}>,
+    occurred_at: 1779876843077191
+  },
+  %{
+    signature: #Dsxir.Signature.Compiled<question -> reasoning, answer>,
+    metadata: %{},
+    source: :predictor,
+    adapter: Dsxir.Adapter.Chat,
+    cache_read_tokens: nil,
+    cache_write_tokens: nil,
+    reasoning_tokens: 0,
+    cost: 8.91e-5,
+    tokens_in: 114,
+    tokens_out: 120,
+    predictor: Dsxir.Predictor.Predict,
+    duration: 2129844875,
+    prediction: #Dsxir.Prediction<
+      reasoning: "Entropy is a measure of the disorder or randomness in a system, often associated with the amount of information that is missing from our knowledge of the complete microstate of the system. In thermodynamics, it quantifies the energy in a physical system that is not available to do work. In information theory, it represents the average amount of information produced by a stochastic source of data. Thus, entropy can be understood in both physical and informational contexts.",
+      answer: "Entropy is a measure of disorder or randomness in a system, reflecting the amount of unavailable energy or information."
+    >,
+    model: nil,
+    cost_breakdown: #Dsxir.Cost<%{in: 114, out: 120, reasoning: 0, cost: 8.91e-5, calls: 1}>,
+    occurred_at: 1779876841134987
+  }
+]
+```
+
+Turn it back off when you are done — the handler runs in the calling
+process on every LM call, so leave it disabled in production unless you
+want the recording:
+
+```elixir
+Dsxir.History.disable()
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
+## Rolling your own: telemetry
+
+`lm_usage`, `track/1`, and `Dsxir.History` are all built on the same
+telemetry event. For a billing pipeline or a live dashboard, attach your
+own handler to `[:dsxir, :predictor, :stop]` (and
+`[:dsxir, :lm, :embed, :stop]` for embeddings):
+
+```elixir
+:telemetry.attach(
+  "cost-tracking-livebook",
+  [:dsxir, :predictor, :stop],
+  fn _event, measurements, metadata, _config ->
+    # measurements: %{tokens_in, tokens_out, cache_read_tokens, cache_write_tokens,
+    #                 reasoning_tokens, cost, duration}  (token values nil when unreported)
+    # metadata.cost: the full %Dsxir.Cost{} struct
+    IO.inspect(metadata.cost, label: "predictor cost")
+  end,
+  nil
+)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+warning: variable "measurements" is unused (if the variable is not meant to be used, prefix it with an underscore)
+└─ Development/edlon/dsxir/guides/tutorials/cost_tracking.livemd#cell:hbanqra4j2rkeduy:4
+
+
+12:14:03.103 [info] The function passed as a handler with ID "cost-tracking-livebook" is a local function.
+This means that it is either an anonymous function or a capture of a function without a module specified. That may cause a performance penalty when calling that handler. For more details see the note in `telemetry:attach/4` documentation.
+
+https://hexdocs.pm/telemetry/telemetry.html#attach/4
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
+```elixir
+Dsxir.context(lm_frame.(), fn ->
+  prog = Dsxir.Program.new(CostDemo.Program)
+  {_prog, _pred} = CostDemo.Program.forward(prog, %{question: "What is 7 * 6?"})
+  :ok
+end)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+predictor cost: #Dsxir.Cost<%{
+  in: 119,
+  out: 41,
+  reasoning: 0,
+  cost: 4.2449999999999995e-5,
+  calls: 1
+}>
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
+```elixir
+:telemetry.detach("cost-tracking-livebook")
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
+The metadata also carries `_cost_scope` (the list of active `track/1`
+scope ids, `[]` outside any block), so a single handler can branch on
+whether it is inside a tracked run. `Dsxir.Cost.to_measurements/1` is the
+function that flattens a `Dsxir.Cost` onto those measurement keys, should
+you need to re-emit one.
+
+## Choosing between them
+
+* **`prediction.lm_usage`** — you already hold the prediction and want
+  the cost of that one call. Zero ceremony.
+* **`Dsxir.Cost.track/1`** — you want the total for a unit of work
+  (a request, a compilation, an eval batch), including fan-out. The
+  go-to for "what did this run cost?".
+* **`Dsxir.History`** — interactive debugging: "what were the last few
+  calls and what did they cost?". A dev tool, not a production meter.
+* **Telemetry** — anything durable: metrics, dashboards, per-tenant
+  billing. The other three are conveniences over this.
