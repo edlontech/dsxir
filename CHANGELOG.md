@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.4.0](https://github.com/edlontech/dsxir/compare/dsxir-v0.3.0...dsxir-v0.4.0) (2026-05-27)
+
+
+### Features
+
+* **cost:** add Dsxir.Cost value type with run and training cost tracking ([32296dd](https://github.com/edlontech/dsxir/commit/32296ddff56a65563396fe2149953c3f1941cd8c))
+* **predictor:** add BestOfN and Refine reward-sampling wrappers ([4f77cc6](https://github.com/edlontech/dsxir/commit/4f77cc6fa93cf641ab07385aaf1241d822217920))
+* **predictor:** add MultiChainComparison and Ensemble composition modules ([2a4473a](https://github.com/edlontech/dsxir/commit/2a4473a9b3bbaac2d5fb929033d5087d1c2adcb2))
+
+
+### Bug Fixes
+
+* Fixed history encoding to file ([718f643](https://github.com/edlontech/dsxir/commit/718f6433cd0b6966917c3cae68c255d14c39d16d))
+* Fixed Sycophant warning ([499d07d](https://github.com/edlontech/dsxir/commit/499d07d55f28180266daca1fdcba2732952e0fbd))
+* Improve copro performance ([5bf2634](https://github.com/edlontech/dsxir/commit/5bf263407343ccf99afc6a2d97e74f887e8feae7))
+* Resolve inline signature atoms with existing-atom mode ([b0db763](https://github.com/edlontech/dsxir/commit/b0db76399c656bdb6f42a77d6b77209118d45187))
+
 ## [0.3.0](https://github.com/edlontech/dsxir/compare/dsxir-v0.2.0...dsxir-v0.3.0) (2026-05-25)
 
 
