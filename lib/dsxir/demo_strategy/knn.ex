@@ -116,7 +116,9 @@ defmodule Dsxir.DemoStrategy.KNN do
     config = merge_credentials(base_config)
     t0 = System.monotonic_time()
 
-    case impl.embed(config, [text], []) do
+    result = Settings.context([lm: {impl, config}], fn -> Dsxir.LM.embed([text], []) end)
+
+    case result do
       {:ok, [vector], _usage} ->
         {System.monotonic_time() - t0, vector}
 

@@ -26,24 +26,11 @@ defmodule Dsxir.Retrieval.Embedder do
     |> Enum.reduce_while({:ok, [], Dsxir.LM.empty_usage()}, fn batch, {:ok, acc, usage_acc} ->
       case Dsxir.LM.embed(batch, opts) do
         {:ok, vectors, usage} ->
-          {:cont, {:ok, acc ++ vectors, merge_usage(usage_acc, usage)}}
+          {:cont, {:ok, acc ++ vectors, Dsxir.Cost.merge(usage_acc, usage)}}
 
         {:error, _} = err ->
           {:halt, err}
       end
     end)
   end
-
-  defp merge_usage(a, b) do
-    %{
-      tokens_in: add_nil(a.tokens_in, b.tokens_in),
-      tokens_out: add_nil(a.tokens_out, b.tokens_out),
-      cost: add_nil(a.cost, b.cost)
-    }
-  end
-
-  defp add_nil(nil, nil), do: nil
-  defp add_nil(nil, b), do: b
-  defp add_nil(a, nil), do: a
-  defp add_nil(a, b), do: a + b
 end

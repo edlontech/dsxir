@@ -167,7 +167,7 @@ defmodule Dsxir.Optimizer.KNNFewShot do
     case embed_batch(embedder_tuple, texts) do
       {:ok, vectors, usage} ->
         entries = build_entries(vectors, trainset)
-        tokens_in = sum_tokens(total, usage[:tokens_in])
+        tokens_in = sum_tokens(total, usage.input_tokens)
         {:cont, {:ok, [{decl.name, entries} | acc], tokens_in}}
 
       {:error, err} ->

@@ -38,7 +38,7 @@ defmodule Dsxir.Optimizer.KNNFewShotTest do
   defp stub_embed(vectors) do
     expect(Dsxir.LM.Sycophant, :embed, fn _cfg, texts, _opts ->
       taken = Enum.take(vectors, length(texts))
-      {:ok, taken, %{tokens_in: length(texts), tokens_out: nil, cost: nil}}
+      {:ok, taken, %Dsxir.Cost{input_tokens: length(texts), calls: 1}}
     end)
   end
 
@@ -159,7 +159,7 @@ defmodule Dsxir.Optimizer.KNNFewShotTest do
 
   test "compile/4 over a runtime-program source enumerates predictors via Source.predictors/1" do
     expect(Dsxir.LM.Sycophant, :embed, fn _cfg, _texts, _opts ->
-      {:ok, [[1.0, 0.0], [0.0, 1.0], [0.5, 0.5]], %{tokens_in: 3, tokens_out: nil, cost: nil}}
+      {:ok, [[1.0, 0.0], [0.0, 1.0], [0.5, 0.5]], %Dsxir.Cost{input_tokens: 3, calls: 1}}
     end)
 
     rp = Dsxir.Test.Fixtures.RuntimePrograms.equivalent_to_qa()

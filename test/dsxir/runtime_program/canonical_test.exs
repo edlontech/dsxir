@@ -5,6 +5,13 @@ defmodule Dsxir.RuntimeProgram.CanonicalTest do
   alias Dsxir.RuntimeProgram.Canonical
   alias Dsxir.Test.Fixtures.RuntimeProgramPayloads
 
+  setup_all do
+    Code.ensure_loaded!(Dsxir.Test.Fixtures.AnswerQuestion)
+    Code.ensure_loaded!(Dsxir.Predictor.Predict)
+    _ = [:qa, :refine, :question, :answer, :required, :optional]
+    :ok
+  end
+
   test "same logical content yields the same version" do
     payload = RuntimeProgramPayloads.minimal()
     rp1 = RuntimeProgram.parse(payload)

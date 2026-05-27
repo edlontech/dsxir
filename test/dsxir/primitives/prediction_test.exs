@@ -18,8 +18,10 @@ defmodule Dsxir.PredictionTest do
   end
 
   test "lm_usage and completions ride alongside fields" do
-    pred = Dsxir.Prediction.new(%{x: 1}, lm_usage: %{input_tokens: 10}, completions: ["raw"])
-    assert pred.lm_usage == %{input_tokens: 10}
+    pred =
+      Dsxir.Prediction.new(%{x: 1}, lm_usage: %Dsxir.Cost{input_tokens: 10}, completions: ["raw"])
+
+    assert pred.lm_usage == %Dsxir.Cost{input_tokens: 10}
     assert pred.completions == ["raw"]
   end
 

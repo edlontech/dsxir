@@ -24,7 +24,7 @@ defmodule Dsxir.Retrieval.EmbedderTest do
     end)
 
     Dsxir.Settings.context([lm: config()], fn ->
-      assert {:ok, ^vectors, %{tokens_in: 100}} = Embedder.embed(%Embedder{}, inputs)
+      assert {:ok, ^vectors, %Dsxir.Cost{input_tokens: 100}} = Embedder.embed(%Embedder{}, inputs)
     end)
   end
 
@@ -42,7 +42,7 @@ defmodule Dsxir.Retrieval.EmbedderTest do
     end)
 
     Dsxir.Settings.context([lm: config()], fn ->
-      assert {:ok, vectors, %{tokens_in: 5}} =
+      assert {:ok, vectors, %Dsxir.Cost{input_tokens: 5}} =
                Embedder.embed(%Embedder{batch_size: 2}, inputs)
 
       assert length(vectors) == 5

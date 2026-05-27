@@ -29,16 +29,24 @@ if Code.ensure_loaded?(Sycophant) do
 
     ## Usage extraction
 
-    On a successful response, the `%Sycophant.Usage{}` struct is flattened into
-    the `Dsxir.LM` usage map. When Sycophant reports `nil` usage, the empty
-    usage map (`tokens_in: nil`, `tokens_out: nil`, `cost: nil`) is returned so
-    downstream telemetry can rely on the keys always being present.
+    On a successful response, the `%Sycophant.Usage{}` struct is mapped into a
+    `%Dsxir.Cost{}` with `calls: 1`. When Sycophant reports `nil` usage,
+    `Dsxir.LM.empty_usage/0` (a zero-valued `Dsxir.Cost`) is returned.
 
-    | `Dsxir.LM` usage key | `Sycophant.Usage` field |
-    | -------------------- | ----------------------- |
-    | `:tokens_in`         | `:input_tokens`         |
-    | `:tokens_out`        | `:output_tokens`        |
-    | `:cost`              | `:total_cost`           |
+    | `Dsxir.Cost` field      | `Sycophant.Usage` field          |
+    | ----------------------- | -------------------------------- |
+    | `:input_tokens`         | `:input_tokens`                  |
+    | `:output_tokens`        | `:output_tokens`                 |
+    | `:cache_read_tokens`    | `:cache_read_input_tokens`       |
+    | `:cache_write_tokens`   | `:cache_creation_input_tokens`   |
+    | `:reasoning_tokens`     | `:reasoning_tokens`              |
+    | `:input_cost`           | `:input_cost`                    |
+    | `:output_cost`          | `:output_cost`                   |
+    | `:cache_read_cost`      | `:cache_read_cost`               |
+    | `:cache_write_cost`     | `:cache_write_cost`              |
+    | `:reasoning_cost`       | `:reasoning_cost`                |
+    | `:total_cost`           | `:total_cost`                    |
+    | `:currency`             | `:pricing.currency`              |
 
     ## Error translation
 
@@ -188,7 +196,21 @@ if Code.ensure_loaded?(Sycophant) do
     defp extract_usage(nil), do: Dsxir.LM.empty_usage()
 
     defp extract_usage(%Sycophant.Usage{} = u) do
-      %{tokens_in: u.input_tokens, tokens_out: u.output_tokens, cost: u.total_cost}
+      %Dsxir.Cost{
+        input_tokens: u.input_tokens,
+        output_tokens: u.output_tokens,
+        cache_read_tokens: u.cache_read_input_tokens,
+        cache_write_tokens: u.cache_creation_input_tokens,
+        reasoning_tokens: u.reasoning_tokens,
+        input_cost: u.input_cost,
+        output_cost: u.output_cost,
+        cache_read_cost: u.cache_read_cost,
+        cache_write_cost: u.cache_write_cost,
+        reasoning_cost: u.reasoning_cost,
+        total_cost: u.total_cost,
+        currency: if(u.pricing, do: u.pricing.currency),
+        calls: 1
+      }
     end
 
     defp maybe_put_credentials(opts, source) do

@@ -1,6 +1,8 @@
 defmodule Dsxir.LMTest do
   use ExUnit.Case, async: false
 
+  alias Dsxir.Test.TelemetryHandler
+
   defmodule StubImpl do
     @behaviour Dsxir.LM
 
@@ -26,6 +28,30 @@ defmodule Dsxir.LMTest do
     end
   end
 
+  defmodule EmbedImpl do
+    @behaviour Dsxir.LM
+
+    @impl Dsxir.LM
+    def generate_text(_config, _messages, _opts),
+      do: {:ok, "embed-impl-text", Dsxir.LM.empty_usage()}
+
+    @impl Dsxir.LM
+    def embed(_config, _inputs, _opts) do
+      {:ok, [[0.1, 0.2]], %Dsxir.Cost{input_tokens: 5, total_cost: 0.0001, calls: 1}}
+    end
+  end
+
+  defmodule EmbedErrorImpl do
+    @behaviour Dsxir.LM
+
+    @impl Dsxir.LM
+    def generate_text(_config, _messages, _opts),
+      do: {:ok, "embed-error-text", Dsxir.LM.empty_usage()}
+
+    @impl Dsxir.LM
+    def embed(_config, _inputs, _opts), do: {:error, :boom}
+  end
+
   setup do
     prior = Dsxir.Settings.snapshot()
     :persistent_term.put({Dsxir.Settings, :globals}, Dsxir.Settings.default_globals())
@@ -39,10 +65,16 @@ defmodule Dsxir.LMTest do
     assert {:generate_text, 3} in callbacks
   end
 
+  test "empty_usage/0 returns a zero Dsxir.Cost" do
+    assert Dsxir.LM.empty_usage() == Dsxir.Cost.zero()
+  end
+
   test "generate_text/2 dispatches to the {impl, config} tuple resolved from settings" do
     Dsxir.Settings.context([lm: {StubImpl, [model: "test-model"]}], fn ->
-      assert {:ok, "stub-response", %{tokens_in: nil, tokens_out: nil, cost: nil}} =
+      assert {:ok, "stub-response", %Dsxir.Cost{} = cost} =
                Dsxir.LM.generate_text([%{role: "user", content: "hi"}], temperature: +0.0)
+
+      assert cost == Dsxir.Cost.zero()
     end)
 
     assert_received {:stub_called, [model: "test-model"], [%{role: "user", content: "hi"}],
@@ -74,7 +106,7 @@ defmodule Dsxir.LMTest do
     schema = Zoi.object(%{answer: Zoi.string()})
 
     Dsxir.Settings.context([lm: {StubImpl, [model: "test-model"]}], fn ->
-      assert {:ok, %{answer: "stub-object"}, %{tokens_in: nil, tokens_out: nil, cost: nil}} =
+      assert {:ok, %{answer: "stub-object"}, %Dsxir.Cost{}} =
                Dsxir.LM.generate_object([%{role: "user", content: "hi"}], schema, [])
     end)
 
@@ -124,11 +156,53 @@ defmodule Dsxir.LMTest do
 
     try do
       Dsxir.Settings.context([lm: {impl, [model: "stub"]}], fn ->
-        assert {:ok, %{answer: "object-response"}, %{tokens_in: nil, tokens_out: nil, cost: nil}} =
+        assert {:ok, %{answer: "object-response"}, %Dsxir.Cost{}} =
                  Dsxir.LM.generate_object([%{role: "user", content: "hi"}], schema, [])
       end)
     after
       Code.ensure_loaded(impl)
     end
+  end
+
+  test "embed/2 emits [:dsxir, :lm, :embed, :stop] with cost on success" do
+    ref = make_ref()
+    handler = "test-embed-#{inspect(ref)}"
+
+    :telemetry.attach(
+      handler,
+      [:dsxir, :lm, :embed, :stop],
+      &TelemetryHandler.forward/4,
+      %{parent: self(), tag: :embed_stop}
+    )
+
+    on_exit(fn -> :telemetry.detach(handler) end)
+
+    Dsxir.Settings.context([lm: {EmbedImpl, [model: "embed-model"]}], fn ->
+      assert {:ok, [[0.1, 0.2]], %Dsxir.Cost{input_tokens: 5}} = Dsxir.LM.embed(["hello"], [])
+    end)
+
+    assert_receive {:embed_stop, [:dsxir, :lm, :embed, :stop],
+                    %{tokens_in: 5, tokens_out: nil, cost: 0.0001, duration: _},
+                    %{model: "embed-model", cost: %Dsxir.Cost{input_tokens: 5}, _cost_scope: []}}
+  end
+
+  test "embed/2 does not emit [:dsxir, :lm, :embed, :stop] on error" do
+    ref = make_ref()
+    handler = "test-embed-error-#{inspect(ref)}"
+
+    :telemetry.attach(
+      handler,
+      [:dsxir, :lm, :embed, :stop],
+      &TelemetryHandler.forward/4,
+      %{parent: self(), tag: :embed_stop_error}
+    )
+
+    on_exit(fn -> :telemetry.detach(handler) end)
+
+    Dsxir.Settings.context([lm: {EmbedErrorImpl, [model: "embed-model"]}], fn ->
+      assert {:error, :boom} = Dsxir.LM.embed(["hello"], [])
+    end)
+
+    refute_receive {:embed_stop_error, _, _, _}
   end
 end

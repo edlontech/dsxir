@@ -4,6 +4,7 @@ defmodule Dsxir.DemoStrategy.KNNTest do
 
   alias Dsxir.DemoStrategy.KNN
   alias Dsxir.DemoStrategy.KNN.Entry
+  alias Dsxir.Test.TelemetryHandler
 
   setup :set_mimic_from_context
   setup :verify_on_exit!
@@ -146,6 +147,33 @@ defmodule Dsxir.DemoStrategy.KNNTest do
     assert_receive {:cfg, cfg}
     assert Keyword.get(cfg, :model) == "test-embed"
     assert Keyword.get(cfg, :api_key) == "k-from-settings"
+  end
+
+  test "resolve emits [:dsxir, :lm, :embed, :stop] for the query embedding" do
+    ref = make_ref()
+    handler = "knn-embed-#{inspect(ref)}"
+
+    :telemetry.attach(
+      handler,
+      [:dsxir, :lm, :embed, :stop],
+      &TelemetryHandler.forward/4,
+      %{parent: self(), tag: :embed_stop}
+    )
+
+    on_exit(fn -> :telemetry.detach(handler) end)
+
+    expect(Dsxir.LM.Sycophant, :embed, fn _cfg, _texts, _opts ->
+      {:ok, [[1.0, 0.0]], %Dsxir.Cost{input_tokens: 3}}
+    end)
+
+    entries = [entry([1.0, 0.0], %{label: "a"})]
+
+    Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "test-embed"]}], fn ->
+      KNN.resolve(strategy(entries, k: 1), %{a: "x"})
+    end)
+
+    assert_receive {:embed_stop, [:dsxir, :lm, :embed, :stop], %{tokens_in: _},
+                    %{cost: %Dsxir.Cost{}, _cost_scope: []}}
   end
 
   test "strip_credentials drops api_key, base_url, headers" do

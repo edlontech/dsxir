@@ -34,6 +34,8 @@ defmodule Dsxir.Telemetry do
       [:dsxir, :evaluate, :item]
       [:dsxir, :evaluate, :stop]
 
+      [:dsxir, :lm, :embed, :stop]
+
       [:dsxir, :runtime_program, :skipped]
 
   ## Always-present keys
@@ -42,11 +44,32 @@ defmodule Dsxir.Telemetry do
   `[:dsxir, :predictor, :exception]` is always present, with value `nil` when no
   error occurred. Subscribers should branch on `nil`, never on `Map.has_key?/2`.
 
-  Token measurements (`tokens_in`, `tokens_out`, `cost`) follow the same
-  always-present-nil convention on `[:dsxir, :predictor, :stop]`. They are
-  populated by `Dsxir.LM` implementations via the `Dsxir.LM.usage()` shape;
-  when the upstream provider did not report usage, the impl returns
-  `Dsxir.LM.empty_usage/0` (all three keys `nil`).
+  Token measurements on `[:dsxir, :predictor, :stop]` follow the same
+  always-present-nil convention: `tokens_in`, `tokens_out`,
+  `cache_read_tokens`, `cache_write_tokens`, `reasoning_tokens`, and `cost`
+  are always present in measurements; their values are `nil` when the upstream
+  LM did not report them. `Dsxir.LM` implementations return a `%Dsxir.Cost{}`
+  (or `Dsxir.LM.empty_usage/0` = `Dsxir.Cost.zero/0` when nothing was
+  reported); `Dsxir.Cost.to_measurements/1` flattens it into these keys.
+
+  The `[:dsxir, :predictor, :stop]` metadata always carries two additional
+  keys: `cost:` (a `%Dsxir.Cost{}` struct) and `_cost_scope:` (a list of
+  active `Dsxir.Cost.track/1` scope ids, `[]` when not inside a track block).
+  Subscribers can branch on both keys unconditionally. `Dsxir.Cost.track/1`
+  uses `_cost_scope` to attribute costs from nested predictor calls back to
+  the enclosing block, returning `{result, %Dsxir.Cost{}}` with the summed
+  cost of all predictor-stop events fired in scope.
+
+  ## Embedding events
+
+  `[:dsxir, :lm, :embed, :stop]`
+
+    * **Measurements:** `%{duration, tokens_in, tokens_out, cache_read_tokens,
+      cache_write_tokens, reasoning_tokens, cost}` — same always-present-nil
+      flattening as predictor stops, via `Dsxir.Cost.to_measurements/1`.
+    * **Metadata:** `%{model, cost: %Dsxir.Cost{}, _cost_scope: [...]}` merged over
+      the resolved `Dsxir.Settings` `:metadata` frame. Emitted by the
+      `Dsxir.LM.embed/2` dispatcher on a successful embed only (never on error).
 
   ## Optimizer events
 
@@ -147,6 +170,8 @@ defmodule Dsxir.Telemetry do
   @evaluate_item [:dsxir, :evaluate, :item]
   @evaluate_stop [:dsxir, :evaluate, :stop]
 
+  @lm_embed_stop [:dsxir, :lm, :embed, :stop]
+
   @type event :: [atom(), ...]
 
   @doc "Event name for `[:dsxir, :predictor, :start]`."
@@ -228,6 +253,10 @@ defmodule Dsxir.Telemetry do
   @doc "Event name for `[:dsxir, :evaluate, :stop]`."
   @spec evaluate_stop() :: event()
   def evaluate_stop, do: @evaluate_stop
+
+  @doc "Event name for `[:dsxir, :lm, :embed, :stop]` (one per successful `Dsxir.LM.embed/2` dispatch)."
+  @spec lm_embed_stop() :: event()
+  def lm_embed_stop, do: @lm_embed_stop
 
   @doc "Thin wrapper over `:telemetry.execute/3`."
   @spec emit(event(), map(), map()) :: :ok

@@ -4,7 +4,8 @@ defmodule Dsxir.History do
 
   Supervised owner of the `:dsxir_history` ETS table. Creates the table at boot
   and holds it for the lifetime of the application; a telemetry handler attached
-  via `enable/0` writes entries on `[:dsxir, :predictor, :stop]`.
+  via `enable/0` writes entries on `[:dsxir, :predictor, :stop]` and
+  `[:dsxir, :lm, :embed, :stop]`.
 
   The handler runs in the calling process (telemetry's design), so the GenServer
   never becomes a write bottleneck. Inserts use a monotonic unique integer key in
@@ -21,6 +22,9 @@ defmodule Dsxir.History do
     * `:max_history_size` (default `10_000`)
     * `:trim_batch_size` (default `256`)
 
+  Each row includes a `source` field (`:predictor` or `:embed`) indicating which
+  event produced it, and a `model` field populated from embed events.
+
   Distinct from the multi-turn conversation value type `Dsxir.Primitives.History`
   (added separately by its own consumer). The name overlap is deliberate — each
   matches its DSPy counterpart (`dspy.inspect_history` debug helper vs.
@@ -31,7 +35,16 @@ defmodule Dsxir.History do
 
   @table :dsxir_history
   @handler_id "dsxir-history-handler"
-  @structured_keys [:predictor, :signature, :adapter, :prediction, :error_class]
+  @structured_keys [
+    :predictor,
+    :signature,
+    :adapter,
+    :prediction,
+    :error_class,
+    :cost,
+    :_cost_scope,
+    :model
+  ]
 
   @derive {Inspect, except: [:counter_ref]}
   defstruct [:counter_ref, :max_size, :trim_batch]
@@ -53,8 +66,9 @@ defmodule Dsxir.History do
   def table, do: @table
 
   @doc """
-  Attaches the telemetry handler to `[:dsxir, :predictor, :stop]`. Idempotent —
-  calling again replaces the existing attachment with the current configuration.
+  Attaches the telemetry handler to `[:dsxir, :predictor, :stop]` and
+  `[:dsxir, :lm, :embed, :stop]`. Idempotent — calling again replaces the
+  existing attachment with the current configuration.
   """
   @spec enable() :: :ok
   def enable, do: GenServer.call(__MODULE__, :enable)
@@ -109,9 +123,9 @@ defmodule Dsxir.History do
     _ = :telemetry.detach(@handler_id)
 
     :ok =
-      :telemetry.attach(
+      :telemetry.attach_many(
         @handler_id,
-        [:dsxir, :predictor, :stop],
+        [Dsxir.Telemetry.predictor_stop(), Dsxir.Telemetry.lm_embed_stop()],
         &__MODULE__.handle_event/4,
         state
       )
@@ -125,18 +139,24 @@ defmodule Dsxir.History do
   end
 
   @doc false
-  def handle_event(_event, measurements, metadata, %__MODULE__{} = state) do
+  def handle_event(event, measurements, metadata, %__MODULE__{} = state) do
     key = :erlang.unique_integer([:monotonic, :positive])
 
     row = %{
       occurred_at: System.system_time(:microsecond),
+      source: source(event),
       predictor: Map.get(metadata, :predictor),
       signature: Map.get(metadata, :signature),
       adapter: Map.get(metadata, :adapter),
+      model: Map.get(metadata, :model),
       prediction: Map.get(metadata, :prediction),
       tokens_in: Map.get(measurements, :tokens_in),
       tokens_out: Map.get(measurements, :tokens_out),
+      cache_read_tokens: Map.get(measurements, :cache_read_tokens),
+      cache_write_tokens: Map.get(measurements, :cache_write_tokens),
+      reasoning_tokens: Map.get(measurements, :reasoning_tokens),
       cost: Map.get(measurements, :cost),
+      cost_breakdown: Map.get(metadata, :cost),
       duration: Map.get(measurements, :duration),
       metadata: Map.drop(metadata, @structured_keys)
     }
@@ -151,6 +171,9 @@ defmodule Dsxir.History do
 
     :ok
   end
+
+  defp source([:dsxir, :predictor, :stop]), do: :predictor
+  defp source([:dsxir, :lm, :embed, :stop]), do: :embed
 
   defp maybe_trim(%__MODULE__{trim_batch: batch, counter_ref: ref}) do
     keys = oldest_keys(batch)

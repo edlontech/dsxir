@@ -20,11 +20,7 @@ defmodule Dsxir.LM do
   @type config :: keyword()
   @type messages :: [map()]
   @type opts :: keyword()
-  @type usage :: %{
-          tokens_in: nil | non_neg_integer(),
-          tokens_out: nil | non_neg_integer(),
-          cost: nil | float()
-        }
+  @type usage :: Dsxir.Cost.t()
 
   @callback generate_text(config(), messages(), opts()) ::
               {:ok, String.t(), usage()} | {:error, term()}
@@ -37,13 +33,9 @@ defmodule Dsxir.LM do
 
   @optional_callbacks [generate_object: 4, embed: 3]
 
-  @doc """
-  Empty usage map used by impls when the upstream LM did not report token
-  counts or cost. The shape is always present: `tokens_in`, `tokens_out`, and
-  `cost` are all `nil`.
-  """
-  @spec empty_usage() :: usage()
-  def empty_usage, do: %{tokens_in: nil, tokens_out: nil, cost: nil}
+  @doc "Zero-valued `Dsxir.Cost` used when the upstream LM reported no usage."
+  @spec empty_usage() :: Dsxir.Cost.t()
+  def empty_usage, do: Dsxir.Cost.zero()
 
   @doc """
   Dispatch a `generate_text` call to the impl module currently active in
@@ -117,14 +109,18 @@ defmodule Dsxir.LM do
   Dispatch an `embed` call to the impl module currently active in
   `Dsxir.Settings`. Per-call `opts` are merged on top of the config. Raises
   `Dsxir.Errors.Invalid.Configuration` when `:lm` is unset, malformed, or the
-  configured impl does not implement the optional `embed/3` callback.
+  configured impl does not implement the optional `embed/3` callback. Emits
+  `[:dsxir, :lm, :embed, :stop]` on a successful result.
   """
   @spec embed([String.t()], opts()) :: {:ok, [[float()]], usage()} | {:error, term()}
   def embed(inputs, opts \\ []) when is_list(inputs) and is_list(opts) do
     case Dsxir.Settings.resolve(:lm) do
       {impl, config} when is_atom(impl) and is_list(config) ->
         if Code.ensure_loaded?(impl) and function_exported?(impl, :embed, 3) do
-          impl.embed(config, inputs, opts)
+          start_time = System.monotonic_time()
+          result = impl.embed(config, inputs, opts)
+          maybe_emit_embed_stop(result, config, opts, start_time)
+          result
         else
           raise %Dsxir.Errors.Invalid.Configuration{
             key: :lm,
@@ -148,4 +144,25 @@ defmodule Dsxir.LM do
         }
     end
   end
+
+  defp maybe_emit_embed_stop({:ok, _vectors, %Dsxir.Cost{} = cost}, config, opts, start_time) do
+    duration = System.monotonic_time() - start_time
+    base_metadata = Dsxir.Settings.resolve(:metadata, %{})
+
+    model =
+      Keyword.get(opts, :embedding_model, Keyword.get(config, :embedding_model)) ||
+        Keyword.get(config, :model)
+
+    Dsxir.Telemetry.emit(
+      Dsxir.Telemetry.lm_embed_stop(),
+      Map.put(Dsxir.Cost.to_measurements(cost), :duration, duration),
+      Map.merge(base_metadata, %{
+        model: model,
+        cost: cost,
+        _cost_scope: Dsxir.Settings.resolve(:_cost_scope, [])
+      })
+    )
+  end
+
+  defp maybe_emit_embed_stop(_result, _config, _opts, _start_time), do: :ok
 end

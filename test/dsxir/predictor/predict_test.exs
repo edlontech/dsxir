@@ -62,7 +62,7 @@ defmodule Dsxir.Predictor.PredictTest do
 
   test "forward/4 emits start/stop telemetry with predictor metadata" do
     expect(Dsxir.LM.Sycophant, :generate_text, fn _, _, _ ->
-      {:ok, "[[ ## answer ## ]]\nx", %{tokens_in: nil, tokens_out: nil, cost: nil}}
+      {:ok, "[[ ## answer ## ]]\nx", Dsxir.Cost.zero()}
     end)
 
     parent = self()
@@ -92,12 +92,18 @@ defmodule Dsxir.Predictor.PredictTest do
                     }}
 
     assert_receive {:telemetry, [:dsxir, :predictor, :stop], %{duration: _},
-                    %{prediction: %Dsxir.Prediction{}, error_class: nil}}
+                    %{
+                      prediction: %Dsxir.Prediction{},
+                      error_class: nil,
+                      cost: %Dsxir.Cost{},
+                      _cost_scope: []
+                    }}
   end
 
   test "forward/4 stop event always carries tokens_in/tokens_out/cost measurements" do
     expect(Dsxir.LM.Sycophant, :generate_text, fn _, _, _ ->
-      {:ok, "[[ ## answer ## ]]\nx", %{tokens_in: 12, tokens_out: 34, cost: 0.0005}}
+      {:ok, "[[ ## answer ## ]]\nx",
+       %Dsxir.Cost{input_tokens: 12, output_tokens: 34, total_cost: 0.0005, calls: 1}}
     end)
 
     parent = self()
@@ -117,12 +123,16 @@ defmodule Dsxir.Predictor.PredictTest do
     end)
 
     assert_receive {:telemetry_stop, _,
-                    %{duration: _, tokens_in: 12, tokens_out: 34, cost: 0.0005}, _}
+                    %{duration: _, tokens_in: 12, tokens_out: 34, cost: 0.0005},
+                    %{
+                      cost: %Dsxir.Cost{input_tokens: 12, output_tokens: 34, total_cost: 0.0005},
+                      _cost_scope: []
+                    }}
   end
 
   test "forward/4 stop event carries nil token measurements when LM returns empty usage" do
     expect(Dsxir.LM.Sycophant, :generate_text, fn _, _, _ ->
-      {:ok, "[[ ## answer ## ]]\nx", %{tokens_in: nil, tokens_out: nil, cost: nil}}
+      {:ok, "[[ ## answer ## ]]\nx", Dsxir.Cost.zero()}
     end)
 
     parent = self()

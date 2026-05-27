@@ -120,6 +120,68 @@ defmodule Dsxir.HistoryTest do
     end
   end
 
+  describe "cost tracking" do
+    test "captures the Cost struct and expanded token measurements" do
+      :ok = History.enable()
+
+      cost = %Dsxir.Cost{
+        input_tokens: 10,
+        output_tokens: 20,
+        cache_read_tokens: 4,
+        total_cost: 0.001,
+        calls: 1
+      }
+
+      Telemetry.emit(
+        Telemetry.predictor_stop(),
+        %{
+          duration: 1,
+          tokens_in: 10,
+          tokens_out: 20,
+          cache_read_tokens: 4,
+          cache_write_tokens: nil,
+          reasoning_tokens: nil,
+          cost: 0.001
+        },
+        %{
+          predictor: Dsxir.Predictor.Predict,
+          signature: SomeSignature,
+          adapter: Dsxir.Adapter.Chat,
+          prediction: %{},
+          error_class: nil,
+          cost: cost,
+          _cost_scope: []
+        }
+      )
+
+      assert [%{source: :predictor, cost_breakdown: ^cost, cache_read_tokens: 4}] =
+               History.last(1)
+    end
+
+    test "captures embed events with source :embed and model" do
+      :ok = History.enable()
+
+      cost = %Dsxir.Cost{input_tokens: 4, total_cost: 0.0002, calls: 1}
+
+      Telemetry.emit(
+        Telemetry.lm_embed_stop(),
+        %{
+          duration: 1,
+          tokens_in: 4,
+          tokens_out: nil,
+          cache_read_tokens: nil,
+          cache_write_tokens: nil,
+          reasoning_tokens: nil,
+          cost: 0.0002
+        },
+        %{model: "embed-model", cost: cost, _cost_scope: []}
+      )
+
+      assert [%{source: :embed, model: "embed-model", cost_breakdown: ^cost, tokens_in: 4}] =
+               History.last(1)
+    end
+  end
+
   describe "counter-driven trim" do
     setup do
       prior = Application.get_env(:dsxir, Dsxir.History, [])

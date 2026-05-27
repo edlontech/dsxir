@@ -11,7 +11,7 @@ defmodule Dsxir.LM.SycophantTest do
       {:ok, %Sycophant.Response{text: "hello", context: %Sycophant.Context{messages: []}}}
     end)
 
-    assert {:ok, "hello", %{tokens_in: nil, tokens_out: nil, cost: nil}} =
+    assert {:ok, "hello", %Dsxir.Cost{}} =
              Impl.generate_text(
                [model: "openai:gpt-4o-mini"],
                [Sycophant.Message.user("hi")],
@@ -31,11 +31,46 @@ defmodule Dsxir.LM.SycophantTest do
        }}
     end)
 
-    assert {:ok, "hello", %{tokens_in: 10, tokens_out: 25, cost: 0.0001}} =
+    assert {:ok, "hello",
+            %Dsxir.Cost{input_tokens: 10, output_tokens: 25, total_cost: 0.0001, calls: 1}} =
              Impl.generate_text([model: "m"], [], [])
   end
 
-  test "generate_text/3 returns empty_usage map when Sycophant returns nil usage" do
+  test "generate_text/3 maps a full Sycophant.Usage into a Dsxir.Cost" do
+    usage = %Sycophant.Usage{
+      input_tokens: 100,
+      output_tokens: 50,
+      cache_read_input_tokens: 10,
+      cache_creation_input_tokens: 5,
+      reasoning_tokens: 3,
+      total_cost: 0.003,
+      pricing: %Sycophant.Pricing{currency: "USD"}
+    }
+
+    expect(Sycophant, :generate_text, fn _model, _msgs, _opts ->
+      {:ok,
+       %Sycophant.Response{
+         text: "hello",
+         usage: usage,
+         context: %Sycophant.Context{messages: []}
+       }}
+    end)
+
+    assert {:ok, "hello", cost} = Impl.generate_text([model: "m"], [], [])
+
+    assert cost == %Dsxir.Cost{
+             input_tokens: 100,
+             output_tokens: 50,
+             cache_read_tokens: 10,
+             cache_write_tokens: 5,
+             reasoning_tokens: 3,
+             total_cost: 0.003,
+             currency: "USD",
+             calls: 1
+           }
+  end
+
+  test "generate_text/3 returns a zero Dsxir.Cost when usage is nil" do
     expect(Sycophant, :generate_text, fn _model, _msgs, _opts ->
       {:ok,
        %Sycophant.Response{
@@ -45,7 +80,7 @@ defmodule Dsxir.LM.SycophantTest do
        }}
     end)
 
-    assert {:ok, "hello", %{tokens_in: nil, tokens_out: nil, cost: nil}} =
+    assert {:ok, "hello", %Dsxir.Cost{}} =
              Impl.generate_text([model: "m"], [], [])
   end
 
@@ -323,7 +358,8 @@ defmodule Dsxir.LM.SycophantTest do
 
       schema = Zoi.object(%{answer: Zoi.string()})
 
-      assert {:ok, %{"answer" => "42"}, %{tokens_in: 7, tokens_out: 11, cost: 0.0002}} =
+      assert {:ok, %{"answer" => "42"},
+              %Dsxir.Cost{input_tokens: 7, output_tokens: 11, total_cost: 0.0002, calls: 1}} =
                Impl.generate_object(
                  [model: "openai:gpt-4o-mini"],
                  [Sycophant.Message.user("hi")],
@@ -344,7 +380,7 @@ defmodule Dsxir.LM.SycophantTest do
 
       schema = Zoi.object(%{answer: Zoi.string()})
 
-      assert {:ok, %{"answer" => "42"}, %{tokens_in: nil, tokens_out: nil, cost: nil}} =
+      assert {:ok, %{"answer" => "42"}, %Dsxir.Cost{}} =
                Impl.generate_object([model: "m"], [], schema, [])
     end
 
@@ -425,7 +461,8 @@ defmodule Dsxir.LM.SycophantTest do
          }}
       end)
 
-      assert {:ok, [[0.1, 0.2], [0.3, 0.4]], %{tokens_in: 2, tokens_out: 0, cost: +0.0}} =
+      assert {:ok, [[0.1, 0.2], [0.3, 0.4]],
+              %Dsxir.Cost{input_tokens: 2, output_tokens: 0, total_cost: +0.0, calls: 1}} =
                Impl.embed(
                  [
                    model: "openai:gpt-4o-mini",
@@ -445,7 +482,7 @@ defmodule Dsxir.LM.SycophantTest do
          }}
       end)
 
-      assert {:ok, [[+0.0]], %{tokens_in: nil, tokens_out: nil, cost: nil}} =
+      assert {:ok, [[+0.0]], %Dsxir.Cost{}} =
                Impl.embed(
                  [model: "m", embedding_model: "config:model"],
                  ["a"],

@@ -6,11 +6,13 @@ defmodule Dsxir.Predictor.Predict do
   Telemetry spans:
 
     * `[:dsxir, :predictor, :start]` — meta `%{predictor, signature, adapter, **metadata}`.
-    * `[:dsxir, :predictor, :stop]`  — meas `%{duration, tokens_in, tokens_out, cost}`, meta `%{predictor, signature, adapter, prediction, error_class: nil, **metadata}`.
+    * `[:dsxir, :predictor, :stop]`  — meas `%{duration, tokens_in, tokens_out, cache_read_tokens, cache_write_tokens, reasoning_tokens, cost}`, meta `%{predictor, signature, adapter, prediction, error_class: nil, cost: %Dsxir.Cost{}, _cost_scope: [...], **metadata}`.
     * `[:dsxir, :predictor, :exception]` — meas `%{duration}`, meta `%{kind, reason, stacktrace, error_class, **metadata}`.
 
-  Token measurements are always present on the stop event; their values are
-  `nil` when the upstream LM did not report usage.
+  Token measurements and `cost` metadata are always present on the stop event;
+  token values are `nil` when the upstream LM did not report usage. `cost` is a
+  `%Dsxir.Cost{}` struct; `_cost_scope` is `[]` outside a `Dsxir.Cost.track/1`
+  block.
 
   ## Adapter fallback
 
@@ -174,13 +176,18 @@ defmodule Dsxir.Predictor.Predict do
   defp completions_for(payload) when is_binary(payload), do: [payload]
   defp completions_for(_), do: []
 
-  defp emit_stop(span_metadata, prediction, usage, start_time) do
+  defp emit_stop(span_metadata, prediction, %Dsxir.Cost{} = cost, start_time) do
     duration = System.monotonic_time() - start_time
 
     Telemetry.emit(
       Telemetry.predictor_stop(),
-      Map.merge(%{duration: duration}, usage),
-      Map.merge(span_metadata, %{prediction: prediction, error_class: nil})
+      Map.put(Dsxir.Cost.to_measurements(cost), :duration, duration),
+      Map.merge(span_metadata, %{
+        prediction: prediction,
+        error_class: nil,
+        cost: cost,
+        _cost_scope: Settings.resolve(:_cost_scope, [])
+      })
     )
   end
 

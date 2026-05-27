@@ -14,7 +14,7 @@ defmodule Dsxir.Prediction do
   @type t :: %__MODULE__{
           fields: map(),
           completions: [String.t()],
-          lm_usage: nil | map(),
+          lm_usage: nil | Dsxir.Cost.t(),
           skipped: nil | [atom()]
         }
 
