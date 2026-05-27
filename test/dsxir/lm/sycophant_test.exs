@@ -115,7 +115,8 @@ defmodule Dsxir.LM.SycophantTest do
   test "generate_text/3 never forwards Dsxir settings keys to Sycophant" do
     expect(Sycophant, :generate_text, fn _model, _msgs, opts ->
       for key <- [:lm, :callbacks, :call_plugs, :program_plugs, :metadata, :hints] do
-        refute Keyword.has_key?(opts, key), "leaked #{inspect(key)} to Sycophant: #{inspect(opts)}"
+        refute Keyword.has_key?(opts, key),
+               "leaked #{inspect(key)} to Sycophant: #{inspect(opts)}"
       end
 
       assert opts[:temperature] == 0.5
@@ -125,7 +126,8 @@ defmodule Dsxir.LM.SycophantTest do
     Impl.generate_text(
       [model: "m", lm: {Impl, []}, metadata: %{tenant: "t"}, temperature: 0.5],
       [],
-      hints: %{answer: "x"}, callbacks: []
+      hints: %{answer: "x"},
+      callbacks: []
     )
   end
 
