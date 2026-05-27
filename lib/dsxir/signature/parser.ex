@@ -4,15 +4,29 @@ defmodule Dsxir.Signature.Parser do
   alias Dsxir.Signature.Compiled
   alias Dsxir.Signature.Field
 
+  @typedoc """
+  Controls how field-name atoms are resolved:
+
+    * `:create` (default) — `String.to_atom/1`, for developer-authored
+      signatures parsed at compile time.
+    * `:existing` — `String.to_existing_atom/1`, for signatures reconstructed
+      from untrusted serialized payloads, so a crafted blob cannot mint
+      unbounded atoms. Unknown names yield `{:error, {:unknown_field, name}}`.
+  """
+  @type atom_mode :: :create | :existing
+
   @doc false
-  @spec parse(String.t()) :: {:ok, Compiled.t()} | {:error, term()}
-  def parse(source) when is_binary(source) do
+  @spec parse(String.t(), [{:atoms, atom_mode()}]) ::
+          {:ok, Compiled.t()} | {:error, term()}
+  def parse(source, opts \\ []) when is_binary(source) do
+    mode = Keyword.get(opts, :atoms, :create)
+
     case String.split(source, "->", parts: 2) do
       [inputs_str, outputs_str] ->
         with {:ok, _} <- non_empty_side(inputs_str, :empty_inputs),
              {:ok, _} <- non_empty_side(outputs_str, :empty_outputs),
-             {:ok, inputs} <- parse_field_list(inputs_str, :input),
-             {:ok, outputs} <- parse_field_list(outputs_str, :output) do
+             {:ok, inputs} <- parse_field_list(inputs_str, :input, mode),
+             {:ok, outputs} <- parse_field_list(outputs_str, :output, mode) do
           {:ok,
            %Compiled{
              fields: inputs ++ outputs,
@@ -34,10 +48,10 @@ defmodule Dsxir.Signature.Parser do
     end
   end
 
-  defp parse_field_list(str, kind) do
+  defp parse_field_list(str, kind, mode) do
     with {:ok, parts} <- validate_parts(split_fields(str)) do
       parts
-      |> Enum.reduce_while({:ok, []}, &reduce_field(&1, &2, kind))
+      |> Enum.reduce_while({:ok, []}, &reduce_field(&1, &2, kind, mode))
       |> case do
         {:ok, fields} -> {:ok, Enum.reverse(fields)}
         err -> err
@@ -53,8 +67,8 @@ defmodule Dsxir.Signature.Parser do
     end
   end
 
-  defp reduce_field(part, {:ok, acc}, kind) do
-    case parse_field(String.trim(part), kind) do
+  defp reduce_field(part, {:ok, acc}, kind, mode) do
+    case parse_field(String.trim(part), kind, mode) do
       {:ok, field} -> {:cont, {:ok, [field | acc]}}
       {:error, _} = err -> {:halt, err}
     end
@@ -85,28 +99,36 @@ defmodule Dsxir.Signature.Parser do
     split_fields(rest, [ch | current], acc, depth)
   end
 
-  defp parse_field(text, kind) do
+  defp parse_field(text, kind, mode) do
     case String.split(text, ":", parts: 2) do
-      [name_str] -> build_field(name_str, "str", kind)
-      [name_str, type_str] -> build_field(name_str, String.trim(type_str), kind)
+      [name_str] -> build_field(name_str, "str", kind, mode)
+      [name_str, type_str] -> build_field(name_str, String.trim(type_str), kind, mode)
     end
   end
 
-  defp build_field(name_str, type_str, kind) do
-    with {:ok, name} <- valid_name(name_str),
+  defp build_field(name_str, type_str, kind, mode) do
+    with {:ok, name} <- valid_name(name_str, mode),
          {:ok, zoi} <- to_zoi(type_str) do
       {:ok, %Field{name: name, type: type_str, zoi: zoi, kind: kind, desc: nil}}
     end
   end
 
-  defp valid_name(str) do
+  defp valid_name(str, mode) do
     trimmed = String.trim(str)
 
     if Regex.match?(~r/^[a-zA-Z_][a-zA-Z0-9_]*$/, trimmed) do
-      {:ok, String.to_atom(trimmed)}
+      name_atom(trimmed, mode)
     else
       {:error, {:invalid_name, str}}
     end
+  end
+
+  defp name_atom(name, :create), do: {:ok, String.to_atom(name)}
+
+  defp name_atom(name, :existing) do
+    {:ok, String.to_existing_atom(name)}
+  rescue
+    ArgumentError -> {:error, {:unknown_field, name}}
   end
 
   defp to_zoi("str"), do: {:ok, Zoi.string()}

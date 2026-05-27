@@ -76,4 +76,27 @@ defmodule Dsxir.Signature.ParserTest do
   test "rejects trailing empty slot" do
     assert {:error, :empty_field} = Parser.parse("a, -> y")
   end
+
+  test "default mode mints new atoms for unseen field names" do
+    name = "fresh_create_#{System.unique_integer([:positive])}"
+
+    assert {:ok, %Compiled{fields: [%Field{name: created} | _]}} =
+             Parser.parse("#{name} -> answer")
+
+    assert Atom.to_string(created) == name
+  end
+
+  test "atoms: :existing resolves names already interned" do
+    _ = [:existing_in_x, :existing_out_y]
+
+    assert {:ok, %Compiled{fields: [%Field{name: :existing_in_x}, %Field{name: :existing_out_y}]}} =
+             Parser.parse("existing_in_x -> existing_out_y", atoms: :existing)
+  end
+
+  test "atoms: :existing rejects unknown field names instead of minting atoms" do
+    name = "never_interned_#{System.unique_integer([:positive])}"
+
+    assert {:error, {:unknown_field, ^name}} =
+             Parser.parse("#{name} -> answer", atoms: :existing)
+  end
 end

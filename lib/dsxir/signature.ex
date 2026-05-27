@@ -33,7 +33,7 @@ defmodule Dsxir.Signature do
   """
   @spec from_string(String.t(), keyword()) :: {:ok, Compiled.t()} | {:error, term()}
   def from_string(source, opts \\ []) when is_binary(source) and is_list(opts) do
-    with {:ok, compiled} <- Dsxir.Signature.Parser.parse(source) do
+    with {:ok, compiled} <- Dsxir.Signature.Parser.parse(source, Keyword.take(opts, [:atoms])) do
       {:ok, apply_instruction(compiled, Keyword.get(opts, :instruction))}
     end
   end
@@ -68,6 +68,12 @@ defmodule Dsxir.Signature do
   Reuses `from_string!/2` by reconstructing the equivalent `inputs -> outputs`
   string from the blob's fields, then attaching `desc` and an `{:inline, blob}`
   source tag.
+
+  Because the blob is untrusted serialized input, field names are resolved with
+  `String.to_existing_atom/1` (`atoms: :existing`): an unknown name fails the
+  parse rather than minting an atom, so a crafted payload cannot exhaust the
+  atom table. This matches the existing-atom discipline the rest of
+  `Dsxir.RuntimeProgram` deserialization already follows.
   """
   @spec from_inline_blob(map()) :: Compiled.t()
   def from_inline_blob(%{"fields" => fields} = blob) when is_list(fields) do
@@ -80,7 +86,7 @@ defmodule Dsxir.Signature do
         Enum.map_join(outputs, ", ", &inline_field_to_source/1)
 
     compiled =
-      from_string!(source, instruction: Map.get(blob, "instruction"))
+      from_string!(source, instruction: Map.get(blob, "instruction"), atoms: :existing)
 
     by_name = Map.new(fields, fn %{"name" => n} = f -> {n, f} end)
 

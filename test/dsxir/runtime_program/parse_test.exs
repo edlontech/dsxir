@@ -58,6 +58,19 @@ defmodule Dsxir.RuntimeProgram.ParseTest do
     assert :answer in names
   end
 
+  test "inline signature with never-interned field name is rejected, not minted" do
+    ghost = "ghost_field_#{System.unique_integer([:positive])}"
+
+    payload =
+      put_in(
+        RuntimeProgramPayloads.with_inline_signature(),
+        ["nodes", Access.at(0), "signature", "fields", Access.at(0), "name"],
+        ghost
+      )
+
+    assert_raise Invalid.Signature, fn -> RuntimeProgram.parse(payload) end
+  end
+
   test "nodes not a list raises Invalid.RuntimeProgram with :parse_error code" do
     payload = Map.put(RuntimeProgramPayloads.minimal(), "nodes", "not a list")
 
