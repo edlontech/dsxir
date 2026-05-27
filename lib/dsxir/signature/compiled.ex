@@ -30,4 +30,19 @@ defmodule Dsxir.Signature.Compiled do
     defp names([]), do: "_"
     defp names(fields), do: fields |> Enum.map_join(", ", &Atom.to_string(&1.name))
   end
+
+  defimpl Jason.Encoder do
+    def encode(%Dsxir.Signature.Compiled{fields: fields, instruction: instruction}, opts) do
+      {inputs, outputs} = Enum.split_with(fields, &(&1.kind == :input))
+
+      Jason.Encode.map(
+        %{
+          instruction: instruction,
+          inputs: Enum.map(inputs, & &1.name),
+          outputs: Enum.map(outputs, & &1.name)
+        },
+        opts
+      )
+    end
+  end
 end

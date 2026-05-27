@@ -13,6 +13,7 @@ defmodule Dsxir.Cost do
   alias Dsxir.Settings
   alias Dsxir.Telemetry
 
+  @derive Jason.Encoder
   defstruct input_tokens: nil,
             output_tokens: nil,
             cache_read_tokens: nil,

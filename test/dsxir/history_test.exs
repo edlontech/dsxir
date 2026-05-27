@@ -93,6 +93,35 @@ defmodule Dsxir.HistoryTest do
       assert length(lines) == 2
       assert [{:ok, _} | _] = Enum.map(lines, &Jason.decode/1)
     end
+
+    @tag :tmp_dir
+    test "encodes rows carrying the compiled signature and cost structs", %{tmp_dir: tmp_dir} do
+      :ok = History.enable()
+
+      signature = Dsxir.Signature.from_string!("question -> answer")
+      cost = %Dsxir.Cost{input_tokens: 10, output_tokens: 20, total_cost: 0.001, calls: 1}
+
+      Telemetry.emit(
+        Telemetry.predictor_stop(),
+        %{duration: 1, tokens_in: 10, tokens_out: 20, cost: 0.001},
+        %{
+          predictor: Dsxir.Predictor.Predict,
+          signature: signature,
+          adapter: Dsxir.Adapter.Chat,
+          prediction: Dsxir.Prediction.new(%{answer: "42"}),
+          error_class: nil,
+          cost: cost,
+          _cost_scope: []
+        }
+      )
+
+      path = Path.join(tmp_dir, "history.jsonl")
+      assert [_row] = History.last(1, file: path)
+
+      assert {:ok, decoded} = path |> File.read!() |> Jason.decode()
+      assert %{"cost_breakdown" => %{"input_tokens" => 10, "total_cost" => 0.001}} = decoded
+      assert %{"signature" => %{"inputs" => ["question"], "outputs" => ["answer"]}} = decoded
+    end
   end
 
   describe "enable/0 idempotency" do
