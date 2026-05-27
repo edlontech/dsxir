@@ -107,12 +107,37 @@ carries `completions`, `lm_usage`, and `skipped`.
   `ProgramOfThought` but exposes a `:tools` option (same shape as `ReAct`)
   whose callables are available inside the generated code. Augments with
   `:generated_code` and `:trajectory`.
+- `MultiChainComparison` — compares M pre-generated reasoning chains (passed
+  under the `:completions` input key, not generated here) and integrates a
+  single best answer. Augments the signature with one `reasoning_attempt_i`
+  input per chain plus a prepended `rationale` output.
 - `Parallel` — `Dsxir.Predictor.Parallel.run/3` runs N calls concurrently and
   returns `{prog, results}`, results in input order as `{:ok, prediction}` /
   `{:error, exception}`. It does not raise; the caller decides.
 
 Predictors that synthesize fields beyond the signature report them via the
 optional `c:augmented_outputs/1` callback (so artifacts validate on save/load).
+
+## Inference-time wrappers
+
+These wrap a compiled program and are called directly from a `forward/2` body —
+they are **not** declared predictors.
+
+- `Dsxir.Predictor.BestOfN.run(program, inputs, reward_fn, opts)` runs the
+  program up to `:n` times with diverse sampling, scores each result with
+  `reward_fn.(inputs, %Dsxir.Prediction{}) -> number()`, and returns the
+  highest-reward `{program, prediction}`. Opts: `:n` (required), `:threshold`
+  (early-stop, default `nil`), `:fail_count` (default `:n`), `:temperature`
+  (default `1.0`).
+- `Dsxir.Predictor.Refine.run/4` is `BestOfN` plus reflection — after each
+  sub-threshold attempt it runs an internal `OfferFeedback` predictor over the
+  trace and injects per-predictor advice into the next attempt via the
+  `Dsxir.Settings` `:hints` channel. Same opts plus `:feedback_lm`.
+- `Dsxir.Predictor.Ensemble.run/3` runs N programs concurrently over the same
+  inputs and reduces the survivors. With `:reduce_fn` it returns a bare
+  `%Dsxir.Prediction{}`; without one, the raw `[%Dsxir.Prediction{}]`. Member
+  failures are tolerated; raises `Dsxir.Errors.Framework.PredictorError`
+  (`reason: :all_failed`) only when every member fails.
 
 ## Adapters (`Dsxir.Adapter.*`)
 
@@ -157,6 +182,10 @@ returns `{:ok, compiled_program, stats}` — a normal `%Dsxir.Program{}`.
 - `KNNFewShot` — nearest-neighbor demo selection.
 - `MIPROv2` — joint instruction + demo search. Takes `auto: :light | :medium |
   :heavy`; overrides include `:proposer_lm`, `:sampler`, `:batch_size`, `:seed`.
+- `COPRO` — instruction-only optimizer; greedy coordinate ascent over `breadth`
+  candidate instructions per predictor across `depth` rounds. Takes `auto:
+  :light | :medium | :heavy`; does not touch demos. Cheaper than `MIPROv2` and
+  a good warm-up step.
 - `GEPA` — reflective Pareto-frontier optimizer. Use a feedback-bearing metric
   (`Dsxir.Metric.ScoreWithFeedback`) so reflection has signal.
 
