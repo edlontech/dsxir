@@ -71,8 +71,7 @@ defmodule Dsxir.Optimizer.SIMBA.Trial do
         top,
         strategies,
         config,
-        p10,
-        p90,
+        {p10, p90},
         num_candidates + 1,
         rng
       )
@@ -204,7 +203,7 @@ defmodule Dsxir.Optimizer.SIMBA.Trial do
   defp strategies_for(max_demos) when max_demos > 0, do: [AppendDemo, AppendRule]
   defp strategies_for(_max_demos), do: [AppendRule]
 
-  defp build_candidates(buckets, s, top, strategies, config, p10, p90, cap, rng) do
+  defp build_candidates(buckets, s, top, strategies, config, {p10, p90}, cap, rng) do
     Enum.reduce_while(buckets, {[], rng}, fn bucket, {acc, r} ->
       {src_idx, r} = Sampler.softmax_sample(s, top, config.temperature_for_candidates, r)
       {cand, r} = drop_demos(program_at(s, src_idx), config, r)

@@ -37,7 +37,9 @@ defmodule Dsxir.Optimizer.SIMBA.Evaluator do
   Options: `:num_threads` (max concurrency, default 4), `:sampling` and
   `:temperature` (enable a scoped diverse `lm` for the forward).
   """
-  @spec run([{Dsxir.Program.t(), Dsxir.Example.t()}], Dsxir.Metric.t(), keyword()) :: [trajectory_record()]
+  @spec run([{Dsxir.Program.t(), Dsxir.Example.t()}], Dsxir.Metric.t(), keyword()) :: [
+          trajectory_record()
+        ]
   def run(pairs, metric, opts \\ [])
       when is_list(pairs) and is_function(metric, 3) and is_list(opts) do
     snapshot = Settings.snapshot()
