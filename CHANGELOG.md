@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.0](https://github.com/edlontech/dsxir/compare/dsxir-v0.4.0...dsxir-v0.5.0) (2026-06-30)
+
+
+### Features
+
+* **simba:** port DSPy SIMBA optimizer ([7e0e4fa](https://github.com/edlontech/dsxir/commit/7e0e4fa33cf76a8fdaa71f32f82576ae354d1cc6))
+* **streaming:** provider-neutral chunks, field-level streaming, and lazy Dsxir.stream/4 ([97fc431](https://github.com/edlontech/dsxir/commit/97fc4315523a53e0a6ad3967ac33b01582881395))
+
+
+### Bug Fixes
+
+* Fixed credo ([c011b93](https://github.com/edlontech/dsxir/commit/c011b9385137ef3ff4afb7d0d8aa9892f5510f51))
+* Fixed format and some doctor issues ([c9550d4](https://github.com/edlontech/dsxir/commit/c9550d4755e93f0f55b03d3a0cb6fd91e74d4761))
+
 ## [0.4.0](https://github.com/edlontech/dsxir/compare/dsxir-v0.3.0...dsxir-v0.4.0) (2026-05-27)
 
 
