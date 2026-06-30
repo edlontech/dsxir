@@ -100,10 +100,10 @@ defmodule Dsxir.Integration.MIPROv2LiveTest do
     )
   end
 
+  @spec score(Program.t(), [Dsxir.Example.t()], Dsxir.Metric.t()) :: float()
   defp score(program, valset, metric) do
-    %EvaluationResult{score: s} =
-      Evaluate.run!(%Evaluate{devset: valset, metric: metric}, program)
-
-    s
+    case Evaluate.run!(%Evaluate{devset: valset, metric: metric}, program) do
+      %EvaluationResult{score: s} when is_float(s) -> s
+    end
   end
 end

@@ -149,7 +149,7 @@ defmodule Dsxir.Optimizer.MIPROv2SessionTest do
              } = trial0
 
       assert is_float(score0)
-      assert is_binary(cand_id) or is_nil(cand_id)
+      assert byte_size(cand_id) > 0
       assert is_integer(dur) and dur >= 0
       assert Map.has_key?(trial0, :stats)
       assert Map.has_key?(trial0, :error)

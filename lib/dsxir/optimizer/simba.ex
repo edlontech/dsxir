@@ -32,12 +32,18 @@ defmodule Dsxir.Optimizer.SIMBA do
   @impl Dsxir.Optimizer
   @spec compile(Program.t(), [Dsxir.Example.t()], Dsxir.Metric.t(), keyword()) ::
           Dsxir.Optimizer.result()
-  def compile(_student, [], _metric, _opts) do
-    {:error, %Errors.Invalid.Trainset{reason: :empty, example: nil}}
-  end
-
   def compile(%Program{} = student, trainset, metric, opts)
       when is_list(trainset) and is_function(metric, 3) and is_list(opts) do
+    case trainset do
+      [] ->
+        {:error, %Errors.Invalid.Trainset{reason: :empty, example: nil}}
+
+      _ ->
+        do_compile(student, trainset, metric, opts)
+    end
+  end
+
+  defp do_compile(student, trainset, metric, opts) do
     started = System.monotonic_time(:millisecond)
 
     Telemetry.emit(
