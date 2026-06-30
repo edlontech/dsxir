@@ -64,7 +64,7 @@ pred[:answer]
 - [Inference-time wrappers](guides/inference_wrappers.md) — `BestOfN`
   and `Refine` reward-sampling wrappers.
 - [Optimizers](guides/optimizers.md) — `LabeledFewShot`,
-  `BootstrapFewShot`, `MIPROv2`, and `COPRO`.
+  `BootstrapFewShot`, `MIPROv2`, `COPRO`, and `SIMBA`.
 - [Runtime Programs](guides/runtime_programs.md) — author programs as
   data instead of code.
 - [Multi-tenant](guides/multi_tenant.md) — per-request credentials,

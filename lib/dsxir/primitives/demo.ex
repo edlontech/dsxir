@@ -12,8 +12,10 @@ defmodule Dsxir.Demo do
     * `:bootstrapped` - captured from a successful `Dsxir.with_trace/1` round
       run by an optimizer (e.g. `Dsxir.Optimizer.BootstrapFewShot`).
 
-  `source` is populated only for `:bootstrapped` demos and carries the round
-  index plus the trainset example index that produced the captured trace.
+  `source` is populated only for `:bootstrapped` demos and carries a provenance
+  map describing what produced the captured trace — e.g. the round and trainset
+  example index for `Dsxir.Optimizer.BootstrapFewShot`, or the originating
+  strategy for `Dsxir.Optimizer.SIMBA`.
   """
 
   @enforce_keys [:example, :kind]
@@ -21,7 +23,7 @@ defmodule Dsxir.Demo do
 
   @type kind :: :labeled | :bootstrapped
 
-  @type source :: nil | %{round: pos_integer(), example_index: non_neg_integer()}
+  @type source :: nil | map()
 
   @type t :: %__MODULE__{
           example: Dsxir.Example.t(),
@@ -35,7 +37,8 @@ defmodule Dsxir.Demo do
 
   @doc """
   Wrap `ex` as a bootstrapped demo captured from a successful trace round.
-  `source` records the round and trainset example that produced it.
+  `source` is a provenance map describing what produced it (e.g. round and
+  trainset example index, or the originating optimizer strategy).
   """
   @spec bootstrapped(Dsxir.Example.t(), source()) :: t()
   def bootstrapped(%Dsxir.Example{} = ex, source) when is_map(source) do

@@ -39,6 +39,8 @@ defmodule Dsxir.Errors do
       "Dsxir.Optimizer.GEPA.",
       Dsxir.Optimizer.COPRO,
       "Dsxir.Optimizer.COPRO.",
+      Dsxir.Optimizer.SIMBA,
+      "Dsxir.Optimizer.SIMBA.",
       Dsxir.Predictor.BestOfN,
       Dsxir.Predictor.Refine,
       "Dsxir.Predictor.Refine.",

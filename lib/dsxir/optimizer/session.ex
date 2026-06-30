@@ -809,6 +809,7 @@ defmodule Dsxir.OptimizerSession do
     |> Map.update!(:trial_log, &[trial | &1])
   end
 
+  defp better_score?(nil, _best), do: false
   defp better_score?(_new, nil), do: true
   defp better_score?(new, best), do: new > best
 
