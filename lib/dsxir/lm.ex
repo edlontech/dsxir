@@ -22,6 +22,17 @@ defmodule Dsxir.LM do
   @type opts :: keyword()
   @type usage :: Dsxir.Cost.t()
 
+  @typedoc """
+  A streaming sink passed in `opts` under `:stream`. The 1-arity form is invoked
+  once per `Dsxir.LM.StreamChunk`; the 2-arity accumulator form threads `acc`
+  across chunks (callers carry parser state without a process). Implementations
+  translate their provider's chunk type into `Dsxir.LM.StreamChunk` before
+  invoking the sink, and still return the final assembled result.
+  """
+  @type stream_sink ::
+          (Dsxir.LM.StreamChunk.t() -> term())
+          | {term(), (Dsxir.LM.StreamChunk.t(), term() -> term())}
+
   @callback generate_text(config(), messages(), opts()) ::
               {:ok, String.t(), usage()} | {:error, term()}
 

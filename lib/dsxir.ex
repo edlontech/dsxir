@@ -45,6 +45,12 @@ defmodule Dsxir do
   defdelegate evaluate(ev, program), to: Dsxir.Evaluate, as: :run
   defdelegate evaluate!(ev, program), to: Dsxir.Evaluate, as: :run!
 
+  @doc """
+  Lazily stream a single predictor call, yielding `%Dsxir.Stream.Event{}` values
+  and ending with the final `%Dsxir.Prediction{}`. See `Dsxir.Stream.run/4`.
+  """
+  defdelegate stream(program, name, inputs, opts \\ []), to: Dsxir.Stream, as: :run
+
   defdelegate compile(impl, student, trainset, metric, opts), to: Dsxir.Optimizer
 
   defdelegate save(program, path), to: Dsxir.Artifact

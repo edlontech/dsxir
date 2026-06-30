@@ -643,4 +643,84 @@ defmodule Dsxir.LM.SycophantTest do
       end)
     end
   end
+
+  describe "generate_text/3 streaming translation" do
+    test "wraps the 1-arity sink so it receives Dsxir.LM.StreamChunk values" do
+      parent = self()
+
+      expect(Sycophant, :generate_text, fn _model, _msgs, opts ->
+        sink = Keyword.fetch!(opts, :stream)
+        sink.(%Sycophant.StreamChunk{type: :text_delta, data: "hi"})
+        sink.(%Sycophant.StreamChunk{type: :done, data: nil})
+        {:ok, %Sycophant.Response{text: "hi", context: %Sycophant.Context{messages: []}}}
+      end)
+
+      sink = fn chunk -> send(parent, {:chunk, chunk}) end
+
+      assert {:ok, "hi", %Dsxir.Cost{}} =
+               Impl.generate_text([model: "m"], [], stream: sink)
+
+      assert_receive {:chunk, %Dsxir.LM.StreamChunk{type: :text_delta, data: "hi"}}
+      assert_receive {:chunk, %Dsxir.LM.StreamChunk{type: :done, data: nil}}
+    end
+
+    test "translates a :usage chunk into a Dsxir.Cost" do
+      parent = self()
+
+      expect(Sycophant, :generate_text, fn _model, _msgs, opts ->
+        sink = Keyword.fetch!(opts, :stream)
+
+        sink.(%Sycophant.StreamChunk{
+          type: :usage,
+          data: %Sycophant.Usage{input_tokens: 5, output_tokens: 7}
+        })
+
+        {:ok, %Sycophant.Response{text: "x", context: %Sycophant.Context{messages: []}}}
+      end)
+
+      assert {:ok, "x", _} =
+               Impl.generate_text([model: "m"], [], stream: fn c -> send(parent, {:chunk, c}) end)
+
+      assert_receive {:chunk,
+                      %Dsxir.LM.StreamChunk{
+                        type: :usage,
+                        data: %Dsxir.Cost{input_tokens: 5, output_tokens: 7, calls: 1}
+                      }}
+    end
+
+    test "translates a terminal :failed chunk into a Dsxir.Errors.LM.*" do
+      parent = self()
+      provider_error = %Sycophant.Error.Provider.RateLimited{retry_after: 3}
+
+      expect(Sycophant, :generate_text, fn _model, _msgs, opts ->
+        sink = Keyword.fetch!(opts, :stream)
+        sink.(%Sycophant.StreamChunk{type: :failed, data: provider_error})
+        {:ok, %Sycophant.Response{text: "x", context: %Sycophant.Context{messages: []}}}
+      end)
+
+      assert {:ok, "x", _} =
+               Impl.generate_text([model: "m"], [], stream: fn c -> send(parent, {:chunk, c}) end)
+
+      assert_receive {:chunk,
+                      %Dsxir.LM.StreamChunk{
+                        type: :failed,
+                        data: %Dsxir.Errors.LM.RateLimited{model_id: "m", retry_after: 3}
+                      }}
+    end
+
+    test "wraps the 2-arity accumulator form, threading translated chunks through acc" do
+      expect(Sycophant, :generate_text, fn _model, _msgs, opts ->
+        {acc, fun} = Keyword.fetch!(opts, :stream)
+        acc = fun.(%Sycophant.StreamChunk{type: :text_delta, data: "a"}, acc)
+        acc = fun.(%Sycophant.StreamChunk{type: :text_delta, data: "b"}, acc)
+        send(self(), {:acc, acc})
+        {:ok, %Sycophant.Response{text: "ab", context: %Sycophant.Context{messages: []}}}
+      end)
+
+      collector = {[], fn %Dsxir.LM.StreamChunk{data: data}, acc -> [data | acc] end}
+
+      assert {:ok, "ab", _} = Impl.generate_text([model: "m"], [], stream: collector)
+      assert_receive {:acc, ["b", "a"]}
+    end
+  end
 end

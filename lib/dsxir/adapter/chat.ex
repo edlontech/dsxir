@@ -78,6 +78,39 @@ defmodule Dsxir.Adapter.Chat do
     result
   end
 
+  @doc """
+  Validate field names passed to `:listen` against a signature. Each must be a
+  declared, string-typed output field — token-streaming a typed (JSON) field is
+  meaningless since its value can't be parsed mid-stream. Raises
+  `Dsxir.Errors.Invalid.Configuration` (`:unknown_listened_field` or
+  `:non_string_listened_field`) otherwise.
+  """
+  @spec validate_listeners!(Runtime.signature(), [atom()]) :: :ok
+  def validate_listeners!(_signature, []), do: :ok
+
+  def validate_listeners!(signature, fields) when is_list(fields) do
+    by_name = signature |> Runtime.outputs() |> Map.new(&{&1.name, &1})
+    Enum.each(fields, &validate_listener!(&1, Map.get(by_name, &1)))
+  end
+
+  defp validate_listener!(name, nil) do
+    raise %Dsxir.Errors.Invalid.Configuration{
+      key: :listen,
+      value: name,
+      reason: :unknown_listened_field
+    }
+  end
+
+  defp validate_listener!(name, field) do
+    unless string_schema?(field.zoi) do
+      raise %Dsxir.Errors.Invalid.Configuration{
+        key: :listen,
+        value: name,
+        reason: :non_string_listened_field
+      }
+    end
+  end
+
   defp do_parse(signature, response, _opts) do
     case extract_fields(signature, response) do
       {:ok, raw} ->

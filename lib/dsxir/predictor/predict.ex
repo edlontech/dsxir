@@ -40,11 +40,16 @@ defmodule Dsxir.Predictor.Predict do
       `Settings.resolve(:adapter)` or `Dsxir.Adapter.Chat`.
     * `:path` — list of path segments stamped onto raised adapter errors for
       nested predictor composition.
-    * `:stream` — 1-arity callback `(chunk -> :ok)` forwarded to the LM impl.
-      The chunk shape is defined by the active `Dsxir.LM` implementation;
-      the final `%Dsxir.Prediction{}` is still returned. Chat adapter only —
-      the Json adapter raises `Dsxir.Errors.Invalid.Configuration` when
+    * `:stream` — 1-arity sink `(%Dsxir.Stream.Event{} -> term)` invoked for each
+      streamed event (`:token`, `:reasoning`, `:tool_call`, `:usage`, `:done`,
+      `:error`). The final `%Dsxir.Prediction{}` is still returned. Chat adapter
+      only — the Json adapter raises `Dsxir.Errors.Invalid.Configuration` when
       `:stream` is set.
+    * `:listen` — list of string-typed output field names. When set (alongside
+      `:stream`), the sink also receives `%Dsxir.Stream.Event{type: :field_delta}`
+      events carrying each listened field's marker-stripped tokens as they stream.
+      Raises `Dsxir.Errors.Invalid.Configuration` for an unknown or non-string
+      field.
   """
 
   @behaviour Dsxir.Predictor
@@ -143,7 +148,11 @@ defmodule Dsxir.Predictor.Predict do
 
   defp run_text_adapter(state, signature, inputs, adapter, opts) do
     messages = adapter.format(signature, inputs, state.demos, opts)
-    lm_opts = Keyword.delete(opts, :instruction_override)
+
+    lm_opts =
+      opts
+      |> Keyword.delete(:instruction_override)
+      |> wrap_stream_sink(signature)
 
     case Dsxir.LM.generate_text(messages, lm_opts) do
       {:ok, payload, usage} -> parse_text_response(adapter, signature, payload, usage, opts)
@@ -159,6 +168,72 @@ defmodule Dsxir.Predictor.Predict do
       {:error, err} -> raise err
     end
   end
+
+  # The consumer's `:stream` sink expects `Dsxir.Stream.Event` values. Replace it
+  # with an LM-facing callback that translates each `Dsxir.LM.StreamChunk` into an
+  # event before the consumer sees it, so the provider chunk type never leaks past
+  # this layer. When `:listen` names output fields, the callback also feeds text
+  # deltas through a `Dsxir.Adapter.Chat.StreamParser` (the accumulator) and emits
+  # `:field_delta` events.
+  defp wrap_stream_sink(opts, signature) do
+    sink = Keyword.get(opts, :stream)
+    listen = Keyword.get(opts, :listen, [])
+    opts = Keyword.delete(opts, :listen)
+
+    cond do
+      not is_function(sink, 1) ->
+        opts
+
+      listen == [] ->
+        Keyword.put(opts, :stream, fn chunk ->
+          sink.(chunk_to_event(chunk))
+          :ok
+        end)
+
+      true ->
+        Dsxir.Adapter.Chat.validate_listeners!(signature, listen)
+        parser = Dsxir.Adapter.Chat.StreamParser.new(listen)
+        Keyword.put(opts, :stream, {parser, &stream_reducer(&1, &2, sink)})
+    end
+  end
+
+  defp stream_reducer(%Dsxir.LM.StreamChunk{type: :text_delta, data: text} = chunk, parser, sink) do
+    sink.(chunk_to_event(chunk))
+    {events, parser} = Dsxir.Adapter.Chat.StreamParser.push(parser, text)
+    Enum.each(events, sink)
+    parser
+  end
+
+  defp stream_reducer(%Dsxir.LM.StreamChunk{type: :done} = chunk, parser, sink) do
+    {events, parser} = Dsxir.Adapter.Chat.StreamParser.finish(parser)
+    Enum.each(events, sink)
+    sink.(chunk_to_event(chunk))
+    parser
+  end
+
+  defp stream_reducer(%Dsxir.LM.StreamChunk{} = chunk, parser, sink) do
+    sink.(chunk_to_event(chunk))
+    parser
+  end
+
+  defp chunk_to_event(%Dsxir.LM.StreamChunk{type: :text_delta, data: data}),
+    do: %Dsxir.Stream.Event{type: :token, data: data}
+
+  defp chunk_to_event(%Dsxir.LM.StreamChunk{type: :reasoning_delta, data: data}),
+    do: %Dsxir.Stream.Event{type: :reasoning, data: data}
+
+  defp chunk_to_event(%Dsxir.LM.StreamChunk{type: :tool_call_delta, data: data}),
+    do: %Dsxir.Stream.Event{type: :tool_call, data: data}
+
+  defp chunk_to_event(%Dsxir.LM.StreamChunk{type: :usage, data: data}),
+    do: %Dsxir.Stream.Event{type: :usage, data: data}
+
+  defp chunk_to_event(%Dsxir.LM.StreamChunk{type: :done, data: data}),
+    do: %Dsxir.Stream.Event{type: :done, data: data}
+
+  defp chunk_to_event(%Dsxir.LM.StreamChunk{type: type, data: data})
+       when type in [:failed, :incomplete, :cancelled],
+       do: %Dsxir.Stream.Event{type: :error, data: data}
 
   defp adapter_lm_mode(adapter) do
     if Code.ensure_loaded?(adapter) and function_exported?(adapter, :lm_mode, 0),

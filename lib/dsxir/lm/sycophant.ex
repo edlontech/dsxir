@@ -22,12 +22,15 @@ if Code.ensure_loaded?(Sycophant) do
 
     ## Streaming
 
-    The `:stream` opt is forwarded to `Sycophant.generate_text/3` unchanged.
-    Sycophant invokes the 1-arity callback with `%Sycophant.StreamChunk{}` values
-    (`:text_delta`, `:tool_call_delta`, `:reasoning_delta`, `:usage`, `:failed`,
-    `:incomplete`, `:cancelled`, `:done`) as the response streams in; the final
-    assembled `{:ok, text, usage}` tuple is still returned by this callback so
-    `Dsxir.Predictor.Predict` can build its `%Dsxir.Prediction{}` normally.
+    The `:stream` opt drives `Sycophant.generate_text/3`. Sycophant emits
+    `%Sycophant.StreamChunk{}` values as the response streams in; this impl wraps
+    the callback so the consumer instead receives provider-neutral
+    `%Dsxir.LM.StreamChunk{}` values — `:usage` chunks carry a `%Dsxir.Cost{}` and
+    terminal `:failed`/`:incomplete`/`:cancelled` chunks carry a translated
+    `Dsxir.Errors.LM.*`. Both the 1-arity sink and Sycophant's 2-arity
+    `{acc, fun}` accumulator form are supported. The final assembled
+    `{:ok, text, usage}` tuple is still returned so `Dsxir.Predictor.Predict` can
+    build its `%Dsxir.Prediction{}` normally.
 
     ## Usage extraction
 
@@ -87,7 +90,7 @@ if Code.ensure_loaded?(Sycophant) do
     @impl Dsxir.LM
     def generate_text(config, messages, opts) do
       model = Keyword.fetch!(config, :model)
-      sycophant_opts = build_sycophant_opts(config, opts)
+      sycophant_opts = build_sycophant_opts(config, wrap_stream_callback(opts, model))
       normalized = normalize_messages(messages)
 
       case Sycophant.generate_text(model, normalized, sycophant_opts) do
@@ -105,6 +108,44 @@ if Code.ensure_loaded?(Sycophant) do
         {:error, err} ->
           {:error, translate(err, model)}
       end
+    end
+
+    # Replace the consumer's `:stream` callback with one that translates each
+    # `Sycophant.StreamChunk` into a provider-neutral `Dsxir.LM.StreamChunk`
+    # before the consumer sees it. Both the 1-arity sink and Sycophant's 2-arity
+    # accumulator form are supported; the accumulator threads through unchanged so
+    # callers can carry parser state across chunks.
+    defp wrap_stream_callback(opts, model) do
+      case Keyword.get(opts, :stream) do
+        fun when is_function(fun, 1) ->
+          Keyword.put(opts, :stream, fn chunk ->
+            fun.(to_chunk(chunk, model))
+            :ok
+          end)
+
+        {acc, fun} when is_function(fun, 2) ->
+          Keyword.put(
+            opts,
+            :stream,
+            {acc, fn chunk, acc -> fun.(to_chunk(chunk, model), acc) end}
+          )
+
+        _ ->
+          opts
+      end
+    end
+
+    defp to_chunk(%Sycophant.StreamChunk{type: :usage, data: usage, index: index}, _model) do
+      %Dsxir.LM.StreamChunk{type: :usage, data: extract_usage(usage), index: index}
+    end
+
+    defp to_chunk(%Sycophant.StreamChunk{type: type, data: error, index: index}, model)
+         when type in [:failed, :incomplete, :cancelled] do
+      %Dsxir.LM.StreamChunk{type: type, data: translate(error, model), index: index}
+    end
+
+    defp to_chunk(%Sycophant.StreamChunk{type: type, data: data, index: index}, _model) do
+      %Dsxir.LM.StreamChunk{type: type, data: data, index: index}
     end
 
     @impl Dsxir.LM
@@ -172,7 +213,8 @@ if Code.ensure_loaded?(Sycophant) do
       :call_plugs,
       :program_plugs,
       :metadata,
-      :hints
+      :hints,
+      :listen
     ]
     @credential_opts [:api_key, :base_url, :headers]
 

@@ -508,22 +508,22 @@ defmodule Dsxir.Predictor.PredictTest do
     end
   end
 
-  describe "streaming pass-through" do
-    test "forward/4 forwards :stream callback to LM impl and returns final prediction" do
+  describe "streaming" do
+    test "forward/4 translates LM stream chunks into Dsxir.Stream.Event and returns final prediction" do
       parent = self()
       ref = make_ref()
 
       expect(Dsxir.LM.Sycophant, :generate_text, fn _config, _msgs, opts ->
-        callback = Keyword.fetch!(opts, :stream)
-        callback.(%Sycophant.StreamChunk{type: :text_delta, data: "[[ ## "})
-        callback.(%Sycophant.StreamChunk{type: :text_delta, data: "answer ## ]]\n"})
-        callback.(%Sycophant.StreamChunk{type: :text_delta, data: "42"})
-        callback.(%Sycophant.StreamChunk{type: :usage, data: %Sycophant.Usage{}})
-        callback.(%Sycophant.StreamChunk{type: :done, data: nil})
+        sink = Keyword.fetch!(opts, :stream)
+        sink.(%Dsxir.LM.StreamChunk{type: :text_delta, data: "[[ ## "})
+        sink.(%Dsxir.LM.StreamChunk{type: :text_delta, data: "answer ## ]]\n"})
+        sink.(%Dsxir.LM.StreamChunk{type: :text_delta, data: "42"})
+        sink.(%Dsxir.LM.StreamChunk{type: :usage, data: Dsxir.Cost.zero()})
+        sink.(%Dsxir.LM.StreamChunk{type: :done, data: nil})
         {:ok, "[[ ## answer ## ]]\n42", Dsxir.LM.empty_usage()}
       end)
 
-      stream = fn chunk -> send(parent, {ref, chunk.type, chunk.data}) end
+      stream = fn %Dsxir.Stream.Event{} = event -> send(parent, {ref, event.type, event.data}) end
 
       Dsxir.Settings.context(
         [lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-4o-mini"]}],
@@ -540,11 +540,94 @@ defmodule Dsxir.Predictor.PredictTest do
         end
       )
 
-      assert_receive {^ref, :text_delta, "[[ ## "}
-      assert_receive {^ref, :text_delta, "answer ## ]]\n"}
-      assert_receive {^ref, :text_delta, "42"}
-      assert_receive {^ref, :usage, %Sycophant.Usage{}}
+      assert_receive {^ref, :token, "[[ ## "}
+      assert_receive {^ref, :token, "answer ## ]]\n"}
+      assert_receive {^ref, :token, "42"}
+      assert_receive {^ref, :usage, %Dsxir.Cost{}}
       assert_receive {^ref, :done, nil}
+    end
+
+    test "forward/4 with listen: emits :field_delta events for the listened field" do
+      parent = self()
+      ref = make_ref()
+
+      expect(Dsxir.LM.Sycophant, :generate_text, fn _config, _msgs, opts ->
+        {acc, fun} = Keyword.fetch!(opts, :stream)
+        acc = fun.(%Dsxir.LM.StreamChunk{type: :text_delta, data: "[[ ## answer ## ]]\n4"}, acc)
+        acc = fun.(%Dsxir.LM.StreamChunk{type: :text_delta, data: "2"}, acc)
+        _acc = fun.(%Dsxir.LM.StreamChunk{type: :done, data: nil}, acc)
+        {:ok, "[[ ## answer ## ]]\n42", Dsxir.LM.empty_usage()}
+      end)
+
+      stream = fn %Dsxir.Stream.Event{} = event -> send(parent, {ref, event}) end
+
+      Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "m"]}], fn ->
+        {%Dsxir.Program.State{}, prediction} =
+          Predict.forward(
+            %Dsxir.Program.State{},
+            AnswerQuestion,
+            %{question: "?"},
+            stream: stream,
+            listen: [:answer]
+          )
+
+        assert prediction[:answer] == "42"
+      end)
+
+      assert_receive {^ref, %Dsxir.Stream.Event{type: :token, data: "[[ ## answer ## ]]\n4"}}
+      assert_receive {^ref, %Dsxir.Stream.Event{type: :field_delta, field: :answer, data: "4"}}
+      assert_receive {^ref, %Dsxir.Stream.Event{type: :field_delta, field: :answer, data: "2"}}
+      assert_receive {^ref, %Dsxir.Stream.Event{type: :done}}
+    end
+
+    test "forward/4 with listen: raises for a non-string output field" do
+      err =
+        try do
+          Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "m"]}], fn ->
+            Predict.forward(
+              %Dsxir.Program.State{},
+              Dsxir.Test.Fixtures.RankItems,
+              %{query: "q", items: ["a"]},
+              stream: fn _ -> :ok end,
+              listen: [:confidence]
+            )
+          end)
+
+          flunk("expected Invalid.Configuration")
+        rescue
+          e in Dsxir.Errors.Invalid.Configuration -> e
+        end
+
+      assert %Dsxir.Errors.Invalid.Configuration{
+               key: :listen,
+               value: :confidence,
+               reason: :non_string_listened_field
+             } = err
+    end
+
+    test "forward/4 with listen: raises for an unknown output field" do
+      err =
+        try do
+          Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "m"]}], fn ->
+            Predict.forward(
+              %Dsxir.Program.State{},
+              AnswerQuestion,
+              %{question: "?"},
+              stream: fn _ -> :ok end,
+              listen: [:nope]
+            )
+          end)
+
+          flunk("expected Invalid.Configuration")
+        rescue
+          e in Dsxir.Errors.Invalid.Configuration -> e
+        end
+
+      assert %Dsxir.Errors.Invalid.Configuration{
+               key: :listen,
+               value: :nope,
+               reason: :unknown_listened_field
+             } = err
     end
 
     test "forward/4 with Json adapter raises Invalid.Configuration when :stream is set" do
