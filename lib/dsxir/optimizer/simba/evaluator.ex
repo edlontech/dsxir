@@ -22,7 +22,7 @@ defmodule Dsxir.Optimizer.SIMBA.Evaluator do
 
   @timeout 60_000
 
-  @type record :: %{
+  @type trajectory_record :: %{
           prediction: Dsxir.Prediction.t() | nil,
           trace: [Dsxir.Trace.Entry.t()],
           score: float(),
@@ -32,12 +32,12 @@ defmodule Dsxir.Optimizer.SIMBA.Evaluator do
 
   @doc """
   Runs each `{program, example}` pair concurrently and returns one trace-capturing
-  `record/0` per pair, order-aligned with the input.
+  `trajectory_record/0` per pair, order-aligned with the input.
 
   Options: `:num_threads` (max concurrency, default 4), `:sampling` and
   `:temperature` (enable a scoped diverse `lm` for the forward).
   """
-  @spec run([{Dsxir.Program.t(), Dsxir.Example.t()}], Dsxir.Metric.t(), keyword()) :: [record()]
+  @spec run([{Dsxir.Program.t(), Dsxir.Example.t()}], Dsxir.Metric.t(), keyword()) :: [trajectory_record()]
   def run(pairs, metric, opts \\ [])
       when is_list(pairs) and is_function(metric, 3) and is_list(opts) do
     snapshot = Settings.snapshot()

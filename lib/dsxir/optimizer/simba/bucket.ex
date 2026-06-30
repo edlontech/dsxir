@@ -7,7 +7,7 @@ defmodule Dsxir.Optimizer.SIMBA.Bucket do
   candidate generation.
   """
 
-  @type record :: %{
+  @type trajectory_record :: %{
           score: float(),
           trace: list(),
           prediction: term(),
@@ -16,7 +16,7 @@ defmodule Dsxir.Optimizer.SIMBA.Bucket do
         }
 
   @type t :: %{
-          records: [record()],
+          records: [trajectory_record()],
           max_to_min_gap: float(),
           max_score: float(),
           max_to_avg_gap: float()
@@ -28,7 +28,7 @@ defmodule Dsxir.Optimizer.SIMBA.Bucket do
   Records are sorted by score descending. Three gap stats are computed:
   `max_to_min_gap`, `max_score`, and `max_to_avg_gap`.
   """
-  @spec from_records([record()]) :: t()
+  @spec from_records([trajectory_record()]) :: t()
   def from_records(records) when records != [] do
     sorted = Enum.sort_by(records, & &1.score, :desc)
     scores = Enum.map(sorted, & &1.score)
