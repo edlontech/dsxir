@@ -48,6 +48,8 @@ defmodule Dsxir.Errors.Invalid.Trainset do
   @moduledoc "Raised when an optimizer is invoked with an empty or malformed trainset."
   use Splode.Error, fields: [:reason, :example], class: :invalid
 
+  @type t :: %__MODULE__{reason: atom(), example: Dsxir.Example.t() | nil}
+
   def message(%{reason: reason}) do
     "invalid trainset: reason=#{inspect(reason)}"
   end

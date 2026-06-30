@@ -5,9 +5,9 @@ defmodule Dsxir.Optimizer.SIMBA.Auto do
   """
 
   @presets %{
-    light:  %{bsize: 16, num_candidates: 4, max_steps: 4,  max_demos: 3},
-    medium: %{bsize: 32, num_candidates: 6, max_steps: 8,  max_demos: 4},
-    heavy:  %{bsize: 48, num_candidates: 8, max_steps: 12, max_demos: 6}
+    light: %{bsize: 16, num_candidates: 4, max_steps: 4, max_demos: 3},
+    medium: %{bsize: 32, num_candidates: 6, max_steps: 8, max_demos: 4},
+    heavy: %{bsize: 48, num_candidates: 8, max_steps: 12, max_demos: 6}
   }
 
   @knobs [

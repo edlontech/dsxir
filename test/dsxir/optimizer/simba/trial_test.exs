@@ -177,7 +177,8 @@ defmodule Dsxir.Optimizer.SIMBA.TrialTest do
   end
 
   test "drop_demos leaves a demo-free program untouched" do
-    {dropped, _rng} = Trial.drop_demos(Program.new(QA.Prog), config(), :rand.seed_s(:exsss, {1, 2, 3}))
+    {dropped, _rng} =
+      Trial.drop_demos(Program.new(QA.Prog), config(), :rand.seed_s(:exsss, {1, 2, 3}))
 
     assert Program.get_state(dropped, :answer).demos == []
   end

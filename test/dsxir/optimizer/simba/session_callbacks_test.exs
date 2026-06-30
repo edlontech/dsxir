@@ -42,7 +42,9 @@ defmodule Dsxir.Optimizer.SIMBA.SessionCallbacksTest do
 
   test "init_session plants the baseline at pool index 0 and shuffles the cursor" do
     ts = trainset(4)
-    {:ok, sampler, planned} = SIMBA.init_session(Program.new(QA.Prog), ts, fn _, _, _ -> 1.0 end, @opts)
+
+    {:ok, sampler, planned} =
+      SIMBA.init_session(Program.new(QA.Prog), ts, fn _, _, _ -> 1.0 end, @opts)
 
     assert planned == 2
     assert sampler.total_planned_trials == 2

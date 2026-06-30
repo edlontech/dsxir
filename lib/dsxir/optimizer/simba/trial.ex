@@ -65,7 +65,17 @@ defmodule Dsxir.Optimizer.SIMBA.Trial do
     strategies = strategies_for(config.max_demos)
 
     {candidates, rng} =
-      build_candidates(sorted_buckets, s, top, strategies, config, p10, p90, num_candidates + 1, rng)
+      build_candidates(
+        sorted_buckets,
+        s,
+        top,
+        strategies,
+        config,
+        p10,
+        p90,
+        num_candidates + 1,
+        rng
+      )
 
     candidate_pairs = for cand <- candidates, ex <- batch, do: {cand, ex}
     outputs2 = Evaluator.run(candidate_pairs, metric, sampling: false, num_threads: num_threads)
@@ -73,7 +83,9 @@ defmodule Dsxir.Optimizer.SIMBA.Trial do
     candidate_scores = candidate_means(candidates, outputs2, bsize)
 
     {registered, candidate_idxs} = register_candidates(s, candidates, outputs2, bsize)
-    {best_score, best_program, best_idx} = best_candidate(candidates, candidate_scores, candidate_idxs)
+
+    {best_score, best_program, best_idx} =
+      best_candidate(candidates, candidate_scores, candidate_idxs)
 
     winning_programs =
       case best_program do

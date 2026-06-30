@@ -151,7 +151,10 @@ defmodule Dsxir.Optimizer.SIMBA.Strategy.AppendRuleTest do
       good = record(0.8, [entry(:answer, %{q: "hi"}, %{a: "good"})])
       bad = record(0.2, [entry(:answer, %{q: "hi"}, %{a: "bad"})])
 
-      stub_advice([%{"module" => "answer", "advice" => "ok"}, %{"module" => "ghost", "advice" => "x"}])
+      stub_advice([
+        %{"module" => "answer", "advice" => "ok"},
+        %{"module" => "ghost", "advice" => "x"}
+      ])
 
       {:ok, updated} = AppendRule.apply(bucket(good, bad), prog, ctx())
 

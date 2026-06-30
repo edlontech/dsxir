@@ -167,7 +167,8 @@ defmodule Dsxir.Optimizer.SIMBA do
   @impl Dsxir.Optimizer
   def init_session(%Program{} = student, trainset, metric, opts)
       when is_list(trainset) and is_list(opts) and (is_function(metric, 3) or is_nil(metric)) do
-    with {:ok, cfg} <- Config.validate(Auto.expand(opts, Keyword.get(opts, :auto, :medium)), trainset),
+    with {:ok, cfg} <-
+           Config.validate(Auto.expand(opts, Keyword.get(opts, :auto, :medium)), trainset),
          {:ok, _decls} <- validate_predictors(student) do
       seed = Keyword.get(opts, :seed, 0)
       initial_rng = :rand.seed_s(:exsss, {seed, seed, seed})
