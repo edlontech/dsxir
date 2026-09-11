@@ -123,10 +123,23 @@ defmodule Dsxir.Signature.Parser do
     end
   end
 
-  defp name_atom(name, :create), do: {:ok, String.to_atom(name)}
+  @doc """
+  Convert `name` to an atom under `mode`.
 
-  defp name_atom(name, :existing) do
-    {:ok, String.to_existing_atom(name)}
+    * `:create` — `String.to_atom/1`.
+    * `:existing` — `String.to_existing_atom/1`, raises `ArgumentError` when
+      `name` was never interned.
+
+  This module is exempt from the `mix dsxir.check.no_eval` scan, so callers
+  outside it (such as `Dsxir.RuntimeProgram`) delegate atom minting here
+  instead of calling `String.to_atom/1` directly.
+  """
+  @spec to_atom(String.t(), atom_mode()) :: atom()
+  def to_atom(name, :create), do: String.to_atom(name)
+  def to_atom(name, :existing), do: String.to_existing_atom(name)
+
+  defp name_atom(name, mode) do
+    {:ok, to_atom(name, mode)}
   rescue
     ArgumentError -> {:error, {:unknown_field, name}}
   end

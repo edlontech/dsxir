@@ -51,6 +51,7 @@ defmodule Dsxir.RuntimeProgram do
 
   @type from_map_opt ::
           {:store, {module(), term()}}
+          | {:atoms, Dsxir.Signature.Parser.atom_mode()}
 
   @doc """
   Parse, validate, run `program_plugs`, and optionally persist a runtime
@@ -61,13 +62,26 @@ defmodule Dsxir.RuntimeProgram do
 
     * `Dsxir.Errors.Invalid.RuntimeProgram` on structural parse failure,
     * `Dsxir.Errors.Halted.ProgramPlug` if a `program_plug` returns `{:halt, reason}`.
+
+  Accepts `atoms: :existing | :create` (default `:existing`), controlling how
+  field names, node names, edge kinds, edge endpoints, node `opts` keys,
+  signature-module names, and inline-signature field names in `payload` are
+  turned into atoms. Only a trusted host should pass `atoms: :create`; a
+  tenant-facing caller should keep the default so a crafted payload cannot
+  mint unbounded atoms. The predictor `impl` string is always resolved with
+  `String.to_existing_atom/1` regardless of `:atoms`, since it must name an
+  already-loaded module; the semantic validator separately rejects a signature
+  module that does not resolve to a loaded `Dsxir.Signature`. Raises
+  `ArgumentError` for any other `:atoms` value.
   """
   @spec from_map(map(), [from_map_opt()]) ::
           {:ok, t()} | {:error, Invalid.RuntimeProgram.t()}
   def from_map(payload, opts \\ [])
 
   def from_map(%{} = payload, opts) when is_list(opts) do
-    with rp <- parse_payload(payload),
+    mode = fetch_atom_mode!(opts)
+
+    with rp <- parse_payload(payload, mode),
          {:ok, validated} <- Validator.validate(rp),
          :ok <- run_program_plugs(validated, opts),
          :ok <- maybe_put_in_store(validated, opts) do
@@ -76,8 +90,20 @@ defmodule Dsxir.RuntimeProgram do
   end
 
   @doc false
-  @spec parse(map()) :: t()
-  def parse(%{} = payload), do: parse_payload(payload)
+  @spec parse(map(), [{:atoms, Dsxir.Signature.Parser.atom_mode()}]) :: t()
+  def parse(%{} = payload, opts \\ []) when is_list(opts) do
+    parse_payload(payload, fetch_atom_mode!(opts))
+  end
+
+  defp fetch_atom_mode!(opts) do
+    case Keyword.get(opts, :atoms, :existing) do
+      mode when mode in [:existing, :create] ->
+        mode
+
+      other ->
+        raise ArgumentError, "atoms: must be :existing or :create, got: #{inspect(other)}"
+    end
+  end
 
   @doc "Compute the SHA-256 content hash of the canonical encoding of `rp`."
   @spec version!(t()) :: <<_::256>>
@@ -85,12 +111,12 @@ defmodule Dsxir.RuntimeProgram do
     :crypto.hash(:sha256, Canonical.encode(rp))
   end
 
-  defp parse_payload(%{} = payload) do
+  defp parse_payload(%{} = payload, mode) do
     id = fetch_id!(payload)
-    inputs = parse_fields(payload, "inputs")
-    outputs = parse_fields(payload, "outputs")
-    nodes = parse_nodes(payload)
-    edges = parse_edges(payload)
+    inputs = parse_fields(payload, "inputs", mode)
+    outputs = parse_fields(payload, "outputs", mode)
+    nodes = parse_nodes(payload, mode)
+    edges = parse_edges(payload, mode)
     metadata = Map.get(payload, "metadata", %{})
 
     rp = %__MODULE__{
@@ -150,100 +176,102 @@ defmodule Dsxir.RuntimeProgram do
   defp fetch_id!(_),
     do: raise_parse_error("payload missing required string field \"id\"")
 
-  defp parse_fields(payload, key) do
+  defp parse_fields(payload, key, mode) do
     case Map.get(payload, key, []) do
-      list when is_list(list) -> Enum.map(list, &parse_field(&1, key))
+      list when is_list(list) -> Enum.map(list, &parse_field(&1, key, mode))
       other -> raise_parse_error("#{inspect(key)} must be a list, got: #{inspect(other)}")
     end
   end
 
-  defp parse_field(%{"name" => name, "type" => type} = field, _key) when is_binary(name) do
+  defp parse_field(%{"name" => name, "type" => type} = field, _key, mode) when is_binary(name) do
     %FieldSpec{
-      name: String.to_existing_atom(name),
+      name: Dsxir.Signature.Parser.to_atom(name, mode),
       type: type,
       description: Map.get(field, "description")
     }
   end
 
-  defp parse_field(other, key) do
+  defp parse_field(other, key, _mode) do
     raise_parse_error("malformed field in #{inspect(key)}: #{inspect(other)}")
   end
 
-  defp parse_nodes(%{"nodes" => nodes}) when is_list(nodes) do
-    Enum.map(nodes, &parse_node/1)
+  defp parse_nodes(%{"nodes" => nodes}, mode) when is_list(nodes) do
+    Enum.map(nodes, &parse_node(&1, mode))
   end
 
-  defp parse_nodes(%{"nodes" => other}) do
+  defp parse_nodes(%{"nodes" => other}, _mode) do
     raise_parse_error("\"nodes\" must be a list, got: #{inspect(other)}")
   end
 
-  defp parse_nodes(_),
+  defp parse_nodes(_, _mode),
     do: raise_parse_error("payload missing required \"nodes\" list")
 
-  defp parse_node(%{"name" => name, "impl" => impl, "signature" => signature} = node)
+  defp parse_node(%{"name" => name, "impl" => impl, "signature" => signature} = node, mode)
        when is_binary(name) do
     %Node{
-      name: String.to_existing_atom(name),
+      name: Dsxir.Signature.Parser.to_atom(name, mode),
       impl: resolve_impl(impl),
-      signature: parse_signature(signature),
+      signature: parse_signature(signature, mode),
       guard: parse_guard(Map.get(node, "guard_source")),
-      opts: parse_opts(Map.get(node, "opts"))
+      opts: parse_opts(Map.get(node, "opts"), mode)
     }
   end
 
-  defp parse_node(other),
+  defp parse_node(other, _mode),
     do: raise_parse_error("malformed node entry: #{inspect(other)}")
 
-  defp parse_opts(nil), do: []
-  defp parse_opts(%{} = opts), do: Enum.map(opts, &parse_opt_entry/1)
+  defp parse_opts(nil, _mode), do: []
+  defp parse_opts(%{} = opts, mode), do: Enum.map(opts, &parse_opt_entry(&1, mode))
 
-  defp parse_opts(other),
+  defp parse_opts(other, _mode),
     do: raise_parse_error("\"opts\" must be a map, got: #{inspect(other)}")
 
-  defp parse_opt_entry({key, value}) when is_binary(key) do
+  defp parse_opt_entry({key, value}, mode) when is_binary(key) do
     if json_scalar?(value) do
-      {String.to_existing_atom(key), value}
+      {Dsxir.Signature.Parser.to_atom(key, mode), value}
     else
       raise_parse_error("opts.#{key} must be a JSON scalar value, got: #{inspect(value)}")
     end
   end
 
-  defp parse_opt_entry({key, _value}),
+  defp parse_opt_entry({key, _value}, _mode),
     do: raise_parse_error("opts keys must be strings, got: #{inspect(key)}")
 
   defp json_scalar?(v), do: is_binary(v) or is_number(v) or is_boolean(v) or is_nil(v)
 
-  defp parse_edges(%{"edges" => edges}) when is_list(edges) do
-    Enum.map(edges, &parse_edge/1)
+  defp parse_edges(%{"edges" => edges}, mode) when is_list(edges) do
+    Enum.map(edges, &parse_edge(&1, mode))
   end
 
-  defp parse_edges(%{"edges" => other}) do
+  defp parse_edges(%{"edges" => other}, _mode) do
     raise_parse_error("\"edges\" must be a list, got: #{inspect(other)}")
   end
 
-  defp parse_edges(_),
+  defp parse_edges(_, _mode),
     do: raise_parse_error("payload missing required \"edges\" list")
 
-  defp parse_edge(%{"from" => from, "to" => to} = edge) do
-    kind = edge |> Map.get("kind", "required") |> String.to_existing_atom()
-    %Edge{from: parse_edge_endpoint(from), to: parse_edge_endpoint(to), kind: kind}
+  defp parse_edge(%{"from" => from, "to" => to} = edge, mode) do
+    kind = edge |> Map.get("kind", "required") |> Dsxir.Signature.Parser.to_atom(mode)
+    %Edge{from: parse_edge_endpoint(from, mode), to: parse_edge_endpoint(to, mode), kind: kind}
   end
 
-  defp parse_edge(other),
+  defp parse_edge(other, _mode),
     do: raise_parse_error("malformed edge entry: #{inspect(other)}")
 
-  defp parse_edge_endpoint(["program_input", field]) when is_binary(field),
-    do: {:program_input, String.to_existing_atom(field)}
+  defp parse_edge_endpoint(["program_input", field], mode) when is_binary(field),
+    do: {:program_input, Dsxir.Signature.Parser.to_atom(field, mode)}
 
-  defp parse_edge_endpoint(["program_output", field]) when is_binary(field),
-    do: {:program_output, String.to_existing_atom(field)}
+  defp parse_edge_endpoint(["program_output", field], mode) when is_binary(field),
+    do: {:program_output, Dsxir.Signature.Parser.to_atom(field, mode)}
 
-  defp parse_edge_endpoint(["node", node, field]) when is_binary(node) and is_binary(field),
-    do: {:node, String.to_existing_atom(node), String.to_existing_atom(field)}
+  defp parse_edge_endpoint(["node", node, field], mode) when is_binary(node) and is_binary(field),
+    do:
+      {:node, Dsxir.Signature.Parser.to_atom(node, mode),
+       Dsxir.Signature.Parser.to_atom(field, mode)}
 
-  defp parse_edge_endpoint(["const", value]), do: {:const, value}
+  defp parse_edge_endpoint(["const", value], _mode), do: {:const, value}
 
-  defp parse_edge_endpoint(other),
+  defp parse_edge_endpoint(other, _mode),
     do: raise_parse_error("invalid edge endpoint: #{inspect(other)}")
 
   defp resolve_impl(name) when is_binary(name), do: String.to_existing_atom(name)
@@ -251,10 +279,13 @@ defmodule Dsxir.RuntimeProgram do
   defp resolve_impl(other),
     do: raise_parse_error("node impl must be a module-atom string, got: #{inspect(other)}")
 
-  defp parse_signature(name) when is_binary(name), do: String.to_existing_atom(name)
-  defp parse_signature(%{} = inline), do: Dsxir.Signature.from_inline_blob(inline)
+  defp parse_signature(name, mode) when is_binary(name),
+    do: Dsxir.Signature.Parser.to_atom(name, mode)
 
-  defp parse_signature(other),
+  defp parse_signature(%{} = inline, mode),
+    do: Dsxir.Signature.from_inline_blob(inline, atoms: mode)
+
+  defp parse_signature(other, _mode),
     do:
       raise_parse_error(
         "node signature must be a module-atom string or inline blob, got: #{inspect(other)}"
@@ -411,10 +442,10 @@ defmodule Dsxir.RuntimeProgram do
   defp encode_endpoint({:const, value}), do: ["const", value]
 
   defp parse_artifact_blob(%{"id" => id} = blob) when is_binary(id) do
-    inputs = parse_fields(blob, "inputs")
-    outputs = parse_fields(blob, "outputs")
-    nodes = parse_nodes(blob)
-    edges = parse_edges(blob)
+    inputs = parse_fields(blob, "inputs", :existing)
+    outputs = parse_fields(blob, "outputs", :existing)
+    nodes = parse_nodes(blob, :existing)
+    edges = parse_edges(blob, :existing)
     metadata = Map.get(blob, "metadata", %{})
     version = decode_version(Map.get(blob, "version"))
 

@@ -59,6 +59,22 @@ defmodule Dsxir.RuntimeProgram.ParseTest do
     assert :answer in names
   end
 
+  test "from_inline_blob/2 with atoms: :create mints a never-interned field name" do
+    ghost = "ghost_inline_#{System.unique_integer([:positive])}"
+    assert_raise ArgumentError, fn -> String.to_existing_atom(ghost) end
+
+    blob = %{
+      "fields" => [
+        %{"name" => ghost, "type" => "str", "kind" => "input"},
+        %{"name" => "answer", "type" => "str", "kind" => "output"}
+      ]
+    }
+
+    compiled = Dsxir.Signature.from_inline_blob(blob, atoms: :create)
+    names = Enum.map(compiled.fields, & &1.name)
+    assert Atom.to_string(hd(names)) == ghost
+  end
+
   test "inline signature with never-interned field name is rejected, not minted" do
     ghost = "ghost_field_#{System.unique_integer([:positive])}"
 

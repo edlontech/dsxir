@@ -69,14 +69,20 @@ defmodule Dsxir.Signature do
   string from the blob's fields, then attaching `desc` and an `{:inline, blob}`
   source tag.
 
-  Because the blob is untrusted serialized input, field names are resolved with
-  `String.to_existing_atom/1` (`atoms: :existing`): an unknown name fails the
-  parse rather than minting an atom, so a crafted payload cannot exhaust the
-  atom table. This matches the existing-atom discipline the rest of
-  `Dsxir.RuntimeProgram` deserialization already follows.
+  Accepts `atoms: :existing | :create` (default `:existing`). Because the blob
+  is normally untrusted serialized input, field names are by default resolved
+  with `String.to_existing_atom/1`: an unknown name fails the parse rather
+  than minting an atom, so a crafted payload cannot exhaust the atom table.
+  This matches the existing-atom discipline the rest of
+  `Dsxir.RuntimeProgram` deserialization already follows. Pass `atoms: :create`
+  only for a trusted host willing to mint atoms from the payload.
   """
-  @spec from_inline_blob(map()) :: Compiled.t()
-  def from_inline_blob(%{"fields" => fields} = blob) when is_list(fields) do
+  @spec from_inline_blob(map(), [{:atoms, Dsxir.Signature.Parser.atom_mode()}]) :: Compiled.t()
+  def from_inline_blob(blob, opts \\ [])
+
+  def from_inline_blob(%{"fields" => fields} = blob, opts) when is_list(fields) do
+    mode = Keyword.get(opts, :atoms, :existing)
+
     {inputs, outputs} =
       Enum.split_with(fields, fn %{"kind" => k} -> k == "input" end)
 
@@ -86,7 +92,7 @@ defmodule Dsxir.Signature do
         Enum.map_join(outputs, ", ", &inline_field_to_source/1)
 
     compiled =
-      from_string!(source, instruction: Map.get(blob, "instruction"), atoms: :existing)
+      from_string!(source, instruction: Map.get(blob, "instruction"), atoms: mode)
 
     by_name = Map.new(fields, fn %{"name" => n} = f -> {n, f} end)
 

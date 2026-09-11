@@ -99,4 +99,16 @@ defmodule Dsxir.Signature.ParserTest do
     assert {:error, {:unknown_field, ^name}} =
              Parser.parse("#{name} -> answer", atoms: :existing)
   end
+
+  test "to_atom/2 mints a fresh atom under :create" do
+    name = "to_atom_create_#{System.unique_integer([:positive])}"
+    assert_raise ArgumentError, fn -> String.to_existing_atom(name) end
+
+    assert Parser.to_atom(name, :create) == String.to_atom(name)
+  end
+
+  test "to_atom/2 raises ArgumentError for an unknown name under :existing" do
+    name = "to_atom_existing_#{System.unique_integer([:positive])}"
+    assert_raise ArgumentError, fn -> Parser.to_atom(name, :existing) end
+  end
 end

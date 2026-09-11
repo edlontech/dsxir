@@ -140,6 +140,73 @@ defmodule Dsxir.RuntimeProgram.ConstructionTest do
              RuntimeProgram.from_map(RuntimeProgramPayloads.valid())
   end
 
+  defp fresh_atoms_payload(suffix) do
+    node_name = "fresh_node_#{suffix}"
+    input_name = "fresh_in_#{suffix}"
+    output_name = "fresh_out_#{suffix}"
+    sig_in = "fresh_sig_in_#{suffix}"
+    sig_out = "fresh_sig_out_#{suffix}"
+
+    payload = %{
+      "id" => "fresh/program_#{suffix}",
+      "inputs" => [%{"name" => input_name, "type" => "str"}],
+      "outputs" => [%{"name" => output_name, "type" => "str"}],
+      "nodes" => [
+        %{
+          "name" => node_name,
+          "impl" => "Elixir.Dsxir.Predictor.Predict",
+          "signature" => %{
+            "fields" => [
+              %{"name" => sig_in, "type" => "str", "kind" => "input"},
+              %{"name" => sig_out, "type" => "str", "kind" => "output"}
+            ]
+          }
+        }
+      ],
+      "edges" => [
+        %{
+          "from" => ["program_input", input_name],
+          "to" => ["node", node_name, sig_in],
+          "kind" => "required"
+        },
+        %{
+          "from" => ["node", node_name, sig_out],
+          "to" => ["program_output", output_name],
+          "kind" => "required"
+        }
+      ],
+      "metadata" => %{}
+    }
+
+    {payload, [node_name, input_name, output_name, sig_in, sig_out]}
+  end
+
+  test "from_map/2 with atoms: :create mints fresh node, field, and inline-signature field names" do
+    suffix = System.unique_integer([:positive])
+    {payload, fresh_names} = fresh_atoms_payload(suffix)
+
+    for name <- fresh_names do
+      assert_raise ArgumentError, fn -> String.to_existing_atom(name) end
+    end
+
+    assert_raise ArgumentError, fn -> RuntimeProgram.from_map(payload) end
+
+    assert {:ok, %RuntimeProgram{}} = RuntimeProgram.from_map(payload, atoms: :create)
+  end
+
+  test "from_map/2 with atoms: :bogus raises ArgumentError" do
+    assert_raise ArgumentError, fn ->
+      RuntimeProgram.from_map(RuntimeProgramPayloads.valid(), atoms: :bogus)
+    end
+  end
+
+  test "resolve_impl still rejects an unknown module string under atoms: :create" do
+    ghost_impl = "Elixir.Dsxir.Test.Fixtures.GhostImpl#{System.unique_integer([:positive])}"
+    payload = put_in(RuntimeProgramPayloads.valid(), ["nodes", Access.at(0), "impl"], ghost_impl)
+
+    assert_raise ArgumentError, fn -> RuntimeProgram.from_map(payload, atoms: :create) end
+  end
+
   test "plug raising an exception is wrapped in %Halted.ProgramPlug{}" do
     raising_plug = fn _ctx -> raise "boom from a plug" end
 
