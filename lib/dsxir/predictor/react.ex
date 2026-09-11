@@ -49,6 +49,9 @@ defmodule Dsxir.Predictor.ReAct do
 
   @react_opts [:tools, :max_iters, :trace_name]
 
+  @impl Dsxir.Predictor
+  def runtime_opts, do: [:max_iters]
+
   defmodule State do
     @moduledoc false
     defstruct trajectory: [], iter: 0, done?: false, final: nil

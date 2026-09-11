@@ -48,6 +48,43 @@ defmodule Dsxir.RuntimeProgram.ValidatorTest do
     assert Enum.any?(errors, &(&1.code == :unknown_impl))
   end
 
+  test "unknown opt key on a ReAct node reported with :unknown_node_opt code" do
+    rp = RuntimePrograms.minimal_valid()
+    [first | rest] = rp.nodes
+    broken = %{first | impl: Dsxir.Predictor.ReAct, opts: [foo: 1]}
+    rp = %{rp | nodes: [broken | rest]}
+
+    assert {:error, %Invalid.RuntimeProgram{errors: errors}} = Validator.validate(rp)
+
+    assert Enum.any?(
+             errors,
+             &(&1.code == :unknown_node_opt and &1.path == [:nodes, first.name, :opts])
+           )
+  end
+
+  test "opts on a predictor that declares no runtime_opts/0 reported with :unknown_node_opt code" do
+    rp = RuntimePrograms.minimal_valid()
+    [first | rest] = rp.nodes
+    broken = %{first | opts: [max_iters: 4]}
+    rp = %{rp | nodes: [broken | rest]}
+
+    assert {:error, %Invalid.RuntimeProgram{errors: errors}} = Validator.validate(rp)
+
+    assert Enum.any?(
+             errors,
+             &(&1.code == :unknown_node_opt and &1.path == [:nodes, first.name, :opts])
+           )
+  end
+
+  test "declared opt key on a ReAct node is accepted" do
+    rp = RuntimePrograms.minimal_valid()
+    [first | rest] = rp.nodes
+    ok = %{first | impl: Dsxir.Predictor.ReAct, opts: [max_iters: 4]}
+    rp = %{rp | nodes: [ok | rest]}
+
+    assert {:ok, _} = Validator.validate(rp)
+  end
+
   test "loaded non-predictor module rejected with :unknown_impl code" do
     rp = RuntimePrograms.minimal_valid()
     [first | rest] = rp.nodes

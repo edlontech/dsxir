@@ -30,7 +30,14 @@ defmodule Dsxir.Predictor do
   """
   @callback augmented_outputs(signature()) :: [atom()]
 
-  @optional_callbacks [augmented_outputs: 1]
+  @doc """
+  Runtime option keys a document may set via a node's `"opts"` map. Optional.
+  Impls that do not implement it accept no runtime opts; a document that sets
+  `opts` on such a node is rejected by `Dsxir.RuntimeProgram.Validator`.
+  """
+  @callback runtime_opts() :: [atom()]
+
+  @optional_callbacks [augmented_outputs: 1, runtime_opts: 0]
 
   @doc """
   Resolve the augmented output names for `impl` against `signature`, or

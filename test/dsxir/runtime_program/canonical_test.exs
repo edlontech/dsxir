@@ -51,6 +51,30 @@ defmodule Dsxir.RuntimeProgram.CanonicalTest do
     assert is_binary(IO.iodata_to_binary(iodata))
   end
 
+  test "differing node opts value changes the version" do
+    base = RuntimeProgramPayloads.with_node_opts()
+    other = put_in(base, ["nodes", Access.at(0), "opts", "max_iters"], 9)
+
+    a = RuntimeProgram.parse(base)
+    b = RuntimeProgram.parse(other)
+    assert a.version != b.version
+  end
+
+  test "explicit empty opts hashes identically to no \"opts\" key" do
+    without_key = RuntimeProgramPayloads.minimal()
+    with_empty_map = put_in(without_key, ["nodes", Access.at(0), "opts"], %{})
+
+    a = RuntimeProgram.parse(without_key)
+    b = RuntimeProgram.parse(with_empty_map)
+    assert a.version == b.version
+  end
+
+  test "node without opts encodes without an \"opts\" key (canonical bytes unchanged)" do
+    rp = RuntimeProgram.parse(RuntimeProgramPayloads.minimal())
+    encoded = rp |> Canonical.encode() |> IO.iodata_to_binary()
+    refute encoded =~ "opts"
+  end
+
   test "FieldSpec description is non-semantic — different desc, same version" do
     base = RuntimeProgramPayloads.minimal()
 

@@ -186,12 +186,32 @@ defmodule Dsxir.RuntimeProgram do
       name: String.to_existing_atom(name),
       impl: resolve_impl(impl),
       signature: parse_signature(signature),
-      guard: parse_guard(Map.get(node, "guard_source"))
+      guard: parse_guard(Map.get(node, "guard_source")),
+      opts: parse_opts(Map.get(node, "opts"))
     }
   end
 
   defp parse_node(other),
     do: raise_parse_error("malformed node entry: #{inspect(other)}")
+
+  defp parse_opts(nil), do: []
+  defp parse_opts(%{} = opts), do: Enum.map(opts, &parse_opt_entry/1)
+
+  defp parse_opts(other),
+    do: raise_parse_error("\"opts\" must be a map, got: #{inspect(other)}")
+
+  defp parse_opt_entry({key, value}) when is_binary(key) do
+    if json_scalar?(value) do
+      {String.to_existing_atom(key), value}
+    else
+      raise_parse_error("opts.#{key} must be a JSON scalar value, got: #{inspect(value)}")
+    end
+  end
+
+  defp parse_opt_entry({key, _value}),
+    do: raise_parse_error("opts keys must be strings, got: #{inspect(key)}")
+
+  defp json_scalar?(v), do: is_binary(v) or is_number(v) or is_boolean(v) or is_nil(v)
 
   defp parse_edges(%{"edges" => edges}) when is_list(edges) do
     Enum.map(edges, &parse_edge/1)
@@ -325,16 +345,23 @@ defmodule Dsxir.RuntimeProgram do
   defp encode_type({:list, inner}), do: "list[" <> encode_type(inner) <> "]"
   defp encode_type(other), do: inspect(other)
 
-  defp encode_node(%Node{name: name, impl: impl, signature: sig, guard: guard}) do
+  defp encode_node(%Node{name: name, impl: impl, signature: sig, guard: guard, opts: opts}) do
     base = %{
       "name" => Atom.to_string(name),
       "impl" => Atom.to_string(impl),
       "signature" => encode_signature(sig)
     }
 
-    case guard do
-      nil -> base
-      %Dsxir.Predicate.Source{source: src} -> Map.put(base, "guard_source", src)
+    base =
+      case guard do
+        nil -> base
+        %Dsxir.Predicate.Source{source: src} -> Map.put(base, "guard_source", src)
+      end
+
+    if opts == [] do
+      base
+    else
+      Map.put(base, "opts", Map.new(opts, fn {k, v} -> {Atom.to_string(k), v} end))
     end
   end
 

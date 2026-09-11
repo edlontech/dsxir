@@ -8,6 +8,7 @@ defmodule Dsxir.RuntimeProgram.ParseTest do
   alias Dsxir.RuntimeProgram.FieldSpec
   alias Dsxir.RuntimeProgram.Node
   alias Dsxir.Test.Fixtures.RuntimeProgramPayloads
+  alias Dsxir.Test.Fixtures.RuntimePrograms
 
   test "parses minimal payload into typed structs" do
     rp = RuntimeProgram.parse(RuntimeProgramPayloads.minimal())
@@ -125,6 +126,44 @@ defmodule Dsxir.RuntimeProgram.ParseTest do
     rp = RuntimeProgram.parse(RuntimeProgramPayloads.minimal())
     [_qa, refine] = rp.nodes
     assert %Predicate.Source{source: "len(question) > 0", ast: nil} = refine.guard
+  end
+
+  test "opts map parses into a keyword list on the node" do
+    rp = RuntimeProgram.parse(RuntimeProgramPayloads.with_node_opts())
+    [qa | _] = rp.nodes
+    assert qa.opts == [max_iters: 4]
+  end
+
+  test "node without an \"opts\" key defaults to an empty keyword list" do
+    rp = RuntimeProgram.parse(RuntimeProgramPayloads.minimal())
+    assert Enum.all?(rp.nodes, &(&1.opts == []))
+  end
+
+  test "\"opts\" that is not a map raises Invalid.RuntimeProgram with :parse_error code" do
+    payload = put_in(RuntimeProgramPayloads.minimal(), ["nodes", Access.at(0), "opts"], "nope")
+
+    error =
+      try do
+        RuntimeProgram.parse(payload)
+      rescue
+        e in Invalid.RuntimeProgram -> e
+      end
+
+    assert %Invalid.RuntimeProgram{errors: [%{code: :parse_error}]} = error
+  end
+
+  test "opts round-trips through to_artifact_blob/1 and from_artifact_blob/1" do
+    rp = RuntimePrograms.minimal_valid()
+    [qa | rest] = rp.nodes
+    qa = %{qa | impl: Dsxir.Predictor.ReAct, opts: [max_iters: 4]}
+    rp = %{rp | nodes: [qa | rest]}
+    rp = %{rp | version: RuntimeProgram.version!(rp)}
+
+    blob = RuntimeProgram.to_artifact_blob(rp)
+    loaded = RuntimeProgram.from_artifact_blob(blob)
+
+    [loaded_qa | _] = loaded.nodes
+    assert loaded_qa.opts == [max_iters: 4]
   end
 
   test "const edge endpoint round-trips verbatim" do

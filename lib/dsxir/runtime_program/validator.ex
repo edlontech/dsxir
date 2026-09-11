@@ -51,6 +51,7 @@ defmodule Dsxir.RuntimeProgram.Validator do
     Enum.concat([
       check_unique_node_names(rp),
       check_predictor_impls(rp),
+      check_node_opts(rp),
       check_signatures(rp),
       check_edge_references(rp),
       check_program_output_reachability(rp),
@@ -121,6 +122,40 @@ defmodule Dsxir.RuntimeProgram.Validator do
 
   defp predictor_module?(mod) do
     function_exported?(mod, :forward, 4)
+  end
+
+  defp check_node_opts(%RuntimeProgram{nodes: nodes}) do
+    Enum.flat_map(nodes, fn %RPNode{name: name, impl: impl, opts: opts} ->
+      cond do
+        opts == [] ->
+          []
+
+        not function_exported?(impl, :runtime_opts, 0) ->
+          [
+            %{
+              path: [:nodes, name, :opts],
+              code: :unknown_node_opt,
+              message: "predictor #{inspect(impl)} accepts no runtime opts",
+              suggestion: nil
+            }
+          ]
+
+        true ->
+          allowed = impl.runtime_opts()
+
+          opts
+          |> Keyword.keys()
+          |> Enum.reject(&(&1 in allowed))
+          |> Enum.map(fn key ->
+            %{
+              path: [:nodes, name, :opts],
+              code: :unknown_node_opt,
+              message: "predictor #{inspect(impl)} does not accept runtime opt #{inspect(key)}",
+              suggestion: nil
+            }
+          end)
+      end
+    end)
   end
 
   defp check_signatures(%RuntimeProgram{nodes: nodes}) do

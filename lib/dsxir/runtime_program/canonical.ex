@@ -58,12 +58,17 @@ defmodule Dsxir.RuntimeProgram.Canonical do
   end
 
   defp encode_node(%Node{} = n) do
-    encode_map(%{
+    base = %{
       "name" => n.name,
       "impl" => n.impl,
       "signature" => encode_signature(n.signature),
       "guard" => encode_guard(n.guard)
-    })
+    }
+
+    case n.opts do
+      [] -> encode_map(base)
+      opts -> encode_map(Map.put(base, "opts", Enum.sort_by(opts, &elem(&1, 0))))
+    end
   end
 
   defp encode_edge(%Edge{from: from, to: to, kind: kind}) do
