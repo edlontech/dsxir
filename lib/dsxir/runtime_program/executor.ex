@@ -47,7 +47,8 @@ defmodule Dsxir.RuntimeProgram.Executor do
               inputs: %{},
               outputs: %{},
               skipped: MapSet.new(),
-              degraded: MapSet.new()
+              degraded: MapSet.new(),
+              node_opts: %{}
 
     @type t :: %__MODULE__{
             program: Dsxir.Program.t() | nil,
@@ -55,7 +56,8 @@ defmodule Dsxir.RuntimeProgram.Executor do
             inputs: map(),
             outputs: map(),
             skipped: MapSet.t(atom()),
-            degraded: MapSet.t(atom())
+            degraded: MapSet.t(atom()),
+            node_opts: %{atom() => keyword()}
           }
   end
 
@@ -68,6 +70,11 @@ defmodule Dsxir.RuntimeProgram.Executor do
   Supported opts:
 
     * `:on_skip` — `:raise` (default), `:tagged_tuple`, or `nil`.
+    * `:node_opts` — `%{node_name() => keyword()}` (default `%{}`). Per-node
+      runtime options a host injects at call time, merged over each node's
+      static `opts` (injected keys win) before dispatch to the predictor.
+      Lets a host hand runtime-only values (such as `tools:`) to specific
+      nodes without those values ever appearing in the document.
   """
   @spec execute(RuntimeProgram.t(), Program.t(), map(), keyword()) ::
           {Program.t(), Prediction.t()}
@@ -81,10 +88,24 @@ defmodule Dsxir.RuntimeProgram.Executor do
             "invalid on_skip option: #{inspect(on_skip)}; expected :raise, :tagged_tuple, or nil"
     end
 
+    node_opts = Keyword.get(opts, :node_opts, %{})
+
+    unless is_map(node_opts) do
+      raise ArgumentError,
+            "invalid node_opts option: #{inspect(node_opts)}; expected a map of node_name => keyword()"
+    end
+
     case Topological.sort(rp.nodes, rp.edges) do
       {:ok, order} ->
         by_name = Map.new(rp.nodes, fn n -> {n.name, n} end)
-        state = %ExecState{program: prog, rp: rp, inputs: inputs, outputs: %{}}
+
+        state = %ExecState{
+          program: prog,
+          rp: rp,
+          inputs: inputs,
+          outputs: %{},
+          node_opts: node_opts
+        }
 
         final = Enum.reduce(order, state, fn name, st -> visit(by_name[name], st) end)
         prediction = project_outputs(final)
@@ -137,8 +158,13 @@ defmodule Dsxir.RuntimeProgram.Executor do
   defp run(%RPNode{} = node, %ExecState{} = st, degraded?) do
     inputs = resolved_inputs(node, st)
 
+    call_opts =
+      node.opts
+      |> Keyword.merge(Map.get(st.node_opts, node.name, []))
+      |> Keyword.put(:degraded, degraded?)
+
     {new_prog, prediction} =
-      Dsxir.Module.Runtime.call(st.program, node.name, inputs, degraded: degraded?)
+      Dsxir.Module.Runtime.call(st.program, node.name, inputs, call_opts)
 
     outputs = Map.put(st.outputs, node.name, prediction.fields)
 

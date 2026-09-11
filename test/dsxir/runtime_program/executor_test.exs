@@ -13,6 +13,8 @@ defmodule Dsxir.RuntimeProgram.ExecutorTest do
   alias Dsxir.Test.Fixtures.AnswerQuestion
   alias Dsxir.Test.Fixtures.DiamondABCD
   alias Dsxir.Test.Fixtures.LinearABC
+  alias Dsxir.Test.Fixtures.OptsEchoLM
+  alias Dsxir.Test.Fixtures.OptsEchoProgram
   alias Dsxir.Test.Fixtures.ScriptedLM
 
   setup do
@@ -263,6 +265,80 @@ defmodule Dsxir.RuntimeProgram.ExecutorTest do
         end
 
       assert err.node == :b
+    end
+  end
+
+  defp opts_echo_rp(node_opts) do
+    %RuntimeProgram{
+      id: "test/opts_echo",
+      version: <<0::256>>,
+      inputs: [%FieldSpec{name: :question, type: :string}],
+      outputs: [%FieldSpec{name: :answer, type: :string}],
+      nodes: [
+        %RPNode{name: :a, impl: OptsEchoLM, signature: AnswerQuestion, opts: node_opts}
+      ],
+      edges: [
+        %Edge{from: {:program_input, :question}, to: {:node, :a, :question}},
+        %Edge{from: {:node, :a, :answer}, to: {:program_output, :answer}}
+      ]
+    }
+  end
+
+  describe "node_opts injection" do
+    test "a node's static opts are merged into the predictor call, plus degraded" do
+      rp = opts_echo_rp(max_iters: 4)
+      prog = Program.new(OptsEchoProgram)
+
+      Executor.execute(rp, prog, %{question: "hi"})
+
+      opts = OptsEchoLM.received_opts(:a)
+      assert Keyword.get(opts, :max_iters) == 4
+      assert Keyword.get(opts, :degraded) == false
+    end
+
+    test "node_opts injects additional keys for the named node over its static opts" do
+      rp = opts_echo_rp(max_iters: 4)
+      prog = Program.new(OptsEchoProgram)
+
+      Executor.execute(rp, prog, %{question: "hi"}, node_opts: %{a: [tools: [:t]]})
+
+      opts = OptsEchoLM.received_opts(:a)
+      assert Keyword.get(opts, :tools) == [:t]
+      assert Keyword.get(opts, :max_iters) == 4
+      assert Keyword.get(opts, :degraded) == false
+    end
+
+    test "injected keys win over static keys for the same name" do
+      rp = opts_echo_rp(max_iters: 4)
+      prog = Program.new(OptsEchoProgram)
+
+      Executor.execute(rp, prog, %{question: "hi"}, node_opts: %{a: [max_iters: 2]})
+
+      assert Keyword.get(OptsEchoLM.received_opts(:a), :max_iters) == 2
+    end
+
+    test "a node absent from node_opts receives only its static opts plus degraded" do
+      rp = opts_echo_rp(max_iters: 4)
+      prog = Program.new(OptsEchoProgram)
+
+      Executor.execute(rp, prog, %{question: "hi"}, node_opts: %{other_node: [tools: [:t]]})
+
+      opts = OptsEchoLM.received_opts(:a)
+      assert Keyword.get(opts, :max_iters) == 4
+      assert Keyword.get(opts, :degraded) == false
+      refute Keyword.has_key?(opts, :tools)
+    end
+
+    test "a non-map node_opts raises ArgumentError" do
+      rp = opts_echo_rp([])
+      prog = Program.new(OptsEchoProgram)
+
+      err =
+        assert_raise ArgumentError, fn ->
+          Executor.execute(rp, prog, %{question: "hi"}, node_opts: [:not_a_map])
+        end
+
+      assert err.message =~ "invalid node_opts option"
     end
   end
 

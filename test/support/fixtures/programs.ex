@@ -82,6 +82,19 @@ defmodule Dsxir.Test.Fixtures.LinearABC do
   def forward(prog, %{question: q}), do: call(prog, :a, %{question: q})
 end
 
+defmodule Dsxir.Test.Fixtures.OptsEchoProgram do
+  @moduledoc """
+  Single-predictor program `:a` over `AnswerQuestion`, routed through the
+  `OptsEchoLM` fixture so executor tests can assert on the opts a node's
+  predictor is invoked with.
+  """
+  use Dsxir.Module
+
+  predictor :a, Dsxir.Test.Fixtures.OptsEchoLM, signature: Dsxir.Test.Fixtures.AnswerQuestion
+
+  def forward(prog, %{question: q}), do: call(prog, :a, %{question: q})
+end
+
 defmodule Dsxir.Test.Fixtures.DiamondABCD do
   @moduledoc """
   Four-predictor diamond `a -> {b, c} -> d`, all using the ScriptedLM

@@ -82,3 +82,32 @@ defmodule Dsxir.Test.Fixtures.ScriptedLM do
     end
   end
 end
+
+defmodule Dsxir.Test.Fixtures.OptsEchoLM do
+  @moduledoc """
+  A `Dsxir.Predictor` fixture that records the `opts` keyword list it is
+  invoked with into the process dictionary, keyed by predictor name, and
+  returns a static `%{answer: "echoed"}` prediction. Used by the executor
+  test suite to assert on `node_opts` injection and merging.
+  """
+
+  @behaviour Dsxir.Predictor
+
+  alias Dsxir.Prediction
+  alias Dsxir.Program.State
+
+  @key {__MODULE__, :received_opts}
+
+  @doc "Fetch the opts most recently received by `predictor_name`, or nil."
+  @spec received_opts(atom()) :: keyword() | nil
+  def received_opts(predictor_name) do
+    Map.get(Process.get(@key, %{}), predictor_name)
+  end
+
+  @impl Dsxir.Predictor
+  def forward(%State{} = state, _signature, _inputs, opts) do
+    predictor = Keyword.fetch!(opts, :path) |> List.last()
+    Process.put(@key, Map.put(Process.get(@key, %{}), predictor, opts))
+    {state, Prediction.new(%{answer: "echoed"})}
+  end
+end
