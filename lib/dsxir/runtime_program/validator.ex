@@ -130,7 +130,7 @@ defmodule Dsxir.RuntimeProgram.Validator do
         opts == [] ->
           []
 
-        not function_exported?(impl, :runtime_opts, 0) ->
+        not (Code.ensure_loaded?(impl) and function_exported?(impl, :runtime_opts, 0)) ->
           [
             %{
               path: [:nodes, name, :opts],

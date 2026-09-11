@@ -5,6 +5,7 @@ defmodule Mix.Tasks.Dsxir.Check.NoEval do
   Scans:
 
     * `lib/dsxir/runtime_program/`
+    * `lib/dsxir/runtime_program.ex`
     * `lib/dsxir/predicate/`
     * `lib/dsxir/program/source.ex`
     * `lib/dsxir/program/source/runtime_program.ex`
@@ -39,6 +40,7 @@ defmodule Mix.Tasks.Dsxir.Check.NoEval do
 
   @scan_paths [
     "lib/dsxir/runtime_program",
+    "lib/dsxir/runtime_program.ex",
     "lib/dsxir/predicate",
     "lib/dsxir/program/source.ex",
     "lib/dsxir/program/source/runtime_program.ex"

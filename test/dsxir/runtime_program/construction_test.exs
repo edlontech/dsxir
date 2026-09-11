@@ -207,6 +207,27 @@ defmodule Dsxir.RuntimeProgram.ConstructionTest do
     assert_raise ArgumentError, fn -> RuntimeProgram.from_map(payload, atoms: :create) end
   end
 
+  test "from_map/2 with atoms: :create does not mint a fresh node opts key" do
+    ghost_key = "ghost_opt_#{System.unique_integer([:positive])}"
+
+    payload =
+      put_in(RuntimeProgramPayloads.valid(), ["nodes", Access.at(0), "opts"], %{ghost_key => 1})
+
+    assert_raise ArgumentError, fn -> RuntimeProgram.from_map(payload, atoms: :create) end
+    assert_raise ArgumentError, fn -> String.to_existing_atom(ghost_key) end
+  end
+
+  test "from_map/2 with atoms: :create does not mint a fresh signature module string" do
+    ghost_sig =
+      "Elixir.Dsxir.Test.Fixtures.GhostSignature#{System.unique_integer([:positive])}"
+
+    payload =
+      put_in(RuntimeProgramPayloads.valid(), ["nodes", Access.at(0), "signature"], ghost_sig)
+
+    assert_raise ArgumentError, fn -> RuntimeProgram.from_map(payload, atoms: :create) end
+    assert_raise ArgumentError, fn -> String.to_existing_atom(ghost_sig) end
+  end
+
   test "plug raising an exception is wrapped in %Halted.ProgramPlug{}" do
     raising_plug = fn _ctx -> raise "boom from a plug" end
 

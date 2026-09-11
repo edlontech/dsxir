@@ -340,6 +340,19 @@ defmodule Dsxir.RuntimeProgram.ExecutorTest do
 
       assert err.message =~ "invalid node_opts option"
     end
+
+    test "a non-keyword-list node_opts value raises ArgumentError naming the node" do
+      rp = opts_echo_rp([])
+      prog = Program.new(OptsEchoProgram)
+
+      err =
+        assert_raise ArgumentError, fn ->
+          Executor.execute(rp, prog, %{question: "hi"}, node_opts: %{a: %{max_iters: 2}})
+        end
+
+      assert err.message =~ "invalid node_opts value"
+      assert err.message =~ inspect(:a)
+    end
   end
 
   describe "framework invariants" do

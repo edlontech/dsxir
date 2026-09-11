@@ -35,6 +35,7 @@ defmodule Dsxir.RuntimeProgram do
   alias Dsxir.RuntimeProgram.Validator
   alias Dsxir.Settings
   alias Dsxir.Signature.Compiled, as: SigCompiled
+  alias Dsxir.Signature.Parser
 
   @enforce_keys [:id, :version, :inputs, :outputs, :nodes, :edges]
   defstruct [:id, :version, :inputs, :outputs, :nodes, :edges, metadata: %{}]
@@ -185,7 +186,7 @@ defmodule Dsxir.RuntimeProgram do
 
   defp parse_field(%{"name" => name, "type" => type} = field, _key, mode) when is_binary(name) do
     %FieldSpec{
-      name: Dsxir.Signature.Parser.to_atom(name, mode),
+      name: Parser.to_atom(name, mode),
       type: type,
       description: Map.get(field, "description")
     }
@@ -209,7 +210,7 @@ defmodule Dsxir.RuntimeProgram do
   defp parse_node(%{"name" => name, "impl" => impl, "signature" => signature} = node, mode)
        when is_binary(name) do
     %Node{
-      name: Dsxir.Signature.Parser.to_atom(name, mode),
+      name: Parser.to_atom(name, mode),
       impl: resolve_impl(impl),
       signature: parse_signature(signature, mode),
       guard: parse_guard(Map.get(node, "guard_source")),
@@ -226,9 +227,9 @@ defmodule Dsxir.RuntimeProgram do
   defp parse_opts(other, _mode),
     do: raise_parse_error("\"opts\" must be a map, got: #{inspect(other)}")
 
-  defp parse_opt_entry({key, value}, mode) when is_binary(key) do
+  defp parse_opt_entry({key, value}, _mode) when is_binary(key) do
     if json_scalar?(value) do
-      {Dsxir.Signature.Parser.to_atom(key, mode), value}
+      {Parser.to_atom(key, :existing), value}
     else
       raise_parse_error("opts.#{key} must be a JSON scalar value, got: #{inspect(value)}")
     end
@@ -251,7 +252,7 @@ defmodule Dsxir.RuntimeProgram do
     do: raise_parse_error("payload missing required \"edges\" list")
 
   defp parse_edge(%{"from" => from, "to" => to} = edge, mode) do
-    kind = edge |> Map.get("kind", "required") |> Dsxir.Signature.Parser.to_atom(mode)
+    kind = edge |> Map.get("kind", "required") |> Parser.to_atom(mode)
     %Edge{from: parse_edge_endpoint(from, mode), to: parse_edge_endpoint(to, mode), kind: kind}
   end
 
@@ -259,15 +260,13 @@ defmodule Dsxir.RuntimeProgram do
     do: raise_parse_error("malformed edge entry: #{inspect(other)}")
 
   defp parse_edge_endpoint(["program_input", field], mode) when is_binary(field),
-    do: {:program_input, Dsxir.Signature.Parser.to_atom(field, mode)}
+    do: {:program_input, Parser.to_atom(field, mode)}
 
   defp parse_edge_endpoint(["program_output", field], mode) when is_binary(field),
-    do: {:program_output, Dsxir.Signature.Parser.to_atom(field, mode)}
+    do: {:program_output, Parser.to_atom(field, mode)}
 
   defp parse_edge_endpoint(["node", node, field], mode) when is_binary(node) and is_binary(field),
-    do:
-      {:node, Dsxir.Signature.Parser.to_atom(node, mode),
-       Dsxir.Signature.Parser.to_atom(field, mode)}
+    do: {:node, Parser.to_atom(node, mode), Parser.to_atom(field, mode)}
 
   defp parse_edge_endpoint(["const", value], _mode), do: {:const, value}
 
@@ -279,8 +278,8 @@ defmodule Dsxir.RuntimeProgram do
   defp resolve_impl(other),
     do: raise_parse_error("node impl must be a module-atom string, got: #{inspect(other)}")
 
-  defp parse_signature(name, mode) when is_binary(name),
-    do: Dsxir.Signature.Parser.to_atom(name, mode)
+  defp parse_signature(name, _mode) when is_binary(name),
+    do: Parser.to_atom(name, :existing)
 
   defp parse_signature(%{} = inline, mode),
     do: Dsxir.Signature.from_inline_blob(inline, atoms: mode)

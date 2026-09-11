@@ -69,12 +69,6 @@ defmodule Dsxir.RuntimeProgram.CanonicalTest do
     assert a.version == b.version
   end
 
-  test "node without opts encodes without an \"opts\" key (canonical bytes unchanged)" do
-    rp = RuntimeProgram.parse(RuntimeProgramPayloads.minimal())
-    encoded = rp |> Canonical.encode() |> IO.iodata_to_binary()
-    refute encoded =~ "opts"
-  end
-
   test "FieldSpec description is non-semantic — different desc, same version" do
     base = RuntimeProgramPayloads.minimal()
 

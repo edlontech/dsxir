@@ -95,6 +95,13 @@ defmodule Dsxir.RuntimeProgram.Executor do
             "invalid node_opts option: #{inspect(node_opts)}; expected a map of node_name => keyword()"
     end
 
+    Enum.each(node_opts, fn {node_name, value} ->
+      unless Keyword.keyword?(value) do
+        raise ArgumentError,
+              "invalid node_opts value for node #{inspect(node_name)}: #{inspect(value)}; expected a keyword list"
+      end
+    end)
+
     case Topological.sort(rp.nodes, rp.edges) do
       {:ok, order} ->
         by_name = Map.new(rp.nodes, fn n -> {n.name, n} end)
