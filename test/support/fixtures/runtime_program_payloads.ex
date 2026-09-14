@@ -92,7 +92,6 @@ defmodule Dsxir.Test.Fixtures.RuntimeProgramPayloads do
     }
   end
 
-  @doc "The `minimal/0` payload with `\"opts\" => %{\"max_iters\" => 4}` on the first node."
   @spec with_node_opts() :: map()
   def with_node_opts do
     put_in(minimal(), ["nodes", Access.at(0), "opts"], %{"max_iters" => 4})

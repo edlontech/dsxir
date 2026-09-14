@@ -141,20 +141,24 @@ defmodule Dsxir.RuntimeProgram.Validator do
           ]
 
         true ->
-          allowed = impl.runtime_opts()
-
-          opts
-          |> Keyword.keys()
-          |> Enum.reject(&(&1 in allowed))
-          |> Enum.map(fn key ->
-            %{
-              path: [:nodes, name, :opts],
-              code: :unknown_node_opt,
-              message: "predictor #{inspect(impl)} does not accept runtime opt #{inspect(key)}",
-              suggestion: nil
-            }
-          end)
+          unknown_node_opt_errors(name, impl, opts)
       end
+    end)
+  end
+
+  defp unknown_node_opt_errors(name, impl, opts) do
+    allowed = impl.runtime_opts()
+
+    opts
+    |> Keyword.keys()
+    |> Enum.reject(&(&1 in allowed))
+    |> Enum.map(fn key ->
+      %{
+        path: [:nodes, name, :opts],
+        code: :unknown_node_opt,
+        message: "predictor #{inspect(impl)} does not accept runtime opt #{inspect(key)}",
+        suggestion: nil
+      }
     end)
   end
 
