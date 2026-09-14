@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.0-rc](https://github.com/edlontech/dsxir/compare/dsxir-v0.5.0...dsxir-v0.6.0-rc) (2026-09-14)
+
+
+### Features
+
+* **runtime_program:** node_opts injection on the executor ([e11a325](https://github.com/edlontech/dsxir/commit/e11a325511f24ab7477fa7363911af9e51b52d66))
+* **runtime_program:** opt-in atoms: :create mode for trusted hosts ([86b616d](https://github.com/edlontech/dsxir/commit/86b616da668a6a809cd58f4f5be6bc2459bb103a))
+* **runtime_program:** per-node opts declared by predictor runtime_opts/0 ([f645773](https://github.com/edlontech/dsxir/commit/f645773b2cfff2332cdbd5dbd6aa10c50670be96))
+
+
+### Bug Fixes
+
+* **runtime_program:** keep opts keys and signature modules existing-only under atoms: :create ([4e5468f](https://github.com/edlontech/dsxir/commit/4e5468ff481812e86c50c9cdf2c5692677682d58))
+
 ## [0.5.0](https://github.com/edlontech/dsxir/compare/dsxir-v0.4.0...dsxir-v0.5.0) (2026-06-30)
 
 
