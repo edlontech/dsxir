@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0-rc.1](https://github.com/edlontech/dsxir/compare/dsxir-v0.6.0-rc...dsxir-v0.6.0-rc.1) (2026-09-15)
+
+
+### Bug Fixes
+
+* **reACT:** Improved reAct tool parsing ([c941788](https://github.com/edlontech/dsxir/commit/c941788f450761cbb4634ec137f20d898114f4ec))
+
 ## [0.6.0-rc](https://github.com/edlontech/dsxir/compare/dsxir-v0.5.0...dsxir-v0.6.0-rc) (2026-09-14)
 
 
