@@ -26,7 +26,7 @@ defmodule Dsxir.OptimizerSession.SecurityTest do
 
     Settings.context(
       [
-        lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-4o-mini", api_key: fake_api_key]},
+        lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-5.4-mini", api_key: fake_api_key]},
         metadata: %{tenant_id: tenant_value, request_id: "req_42"}
       ],
       fn ->

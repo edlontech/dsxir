@@ -24,7 +24,7 @@ defmodule Dsxir.Integration.EvaluateArtifactTest do
           [
             lm:
               {Dsxir.LM.Sycophant,
-               [model: "openai:gpt-4o-mini", api_key: api_key, temperature: 0.0]}
+               [model: "openai:gpt-5.4-mini", api_key: api_key, temperature: 0.0]}
           ],
           fn ->
             baseline = Program.new(QA.Prog)
@@ -57,7 +57,7 @@ defmodule Dsxir.Integration.EvaluateArtifactTest do
           [
             lm:
               {Dsxir.LM.Sycophant,
-               [model: "openai:gpt-4o-mini", api_key: api_key, temperature: 0.0]}
+               [model: "openai:gpt-5.4-mini", api_key: api_key, temperature: 0.0]}
           ],
           fn ->
             ev = %Evaluate{devset: QA.devset_20(), metric: &QA.exact_match/3, num_threads: 8}

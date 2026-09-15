@@ -144,7 +144,7 @@ defmodule Dsxir.Predicate.Parser do
       |> concat(ws)
       |> ignore(string(")")),
       literal,
-      field |> post_traverse({__MODULE__, :__arith_non_literal__, []})
+      field
     ])
   )
 
@@ -332,11 +332,6 @@ defmodule Dsxir.Predicate.Parser do
   @doc false
   def __length__(rest, [field_node | tail], context, _line, _offset) do
     {rest, [{:length, field_node} | tail], context}
-  end
-
-  @doc false
-  def __arith_non_literal__(_rest, _args, _context, _line, _offset) do
-    {:error, "arithmetic must be literal-only"}
   end
 
   @doc false

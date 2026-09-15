@@ -51,7 +51,7 @@ defmodule Dsxir.Adapter.JsonProviderQuirksTest do
 
     Dsxir.context(
       [
-        lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-4o-mini"]},
+        lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-5.4-mini"]},
         adapter: Dsxir.Adapter.Json
       ],
       fn ->

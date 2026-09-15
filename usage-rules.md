@@ -18,7 +18,7 @@ LM impls live under their own module names (`Dsxir.Predictor.*`,
 
 ```elixir
 # boot
-Dsxir.configure(lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-4o-mini"]},
+Dsxir.configure(lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-5.4-mini"]},
                 adapter: Dsxir.Adapter.Chat)
 
 # per request (e.g. a Plug)

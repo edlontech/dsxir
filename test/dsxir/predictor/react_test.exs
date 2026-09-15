@@ -74,6 +74,49 @@ defmodule Dsxir.Predictor.ReActTest do
     end)
   end
 
+  test "structured output constrains tool names and argument shapes" do
+    expect(Sycophant, :generate_object, 1, fn _model, _messages, schema, _opts ->
+      assert {:error, _} =
+               Zoi.parse(schema, %{
+                 next_thought: "compute",
+                 next_tool_name: "calculator",
+                 next_tool_args: "gibberish"
+               })
+
+      assert {:error, _} =
+               Zoi.parse(schema, %{
+                 next_thought: "compute",
+                 next_tool_name: "unknown",
+                 next_tool_args: %{expression: "2 + 2"}
+               })
+
+      {:ok,
+       %Sycophant.Response{
+         object: %{
+           next_thought: "done",
+           next_tool_name: "finish",
+           next_tool_args: %{answer: "ok"}
+         },
+         usage: nil,
+         context: %Sycophant.Context{messages: []}
+       }}
+    end)
+
+    Dsxir.Settings.context([lm: {Dsxir.LM.Sycophant, [model: "fake:m"]}], fn ->
+      {_, prediction} =
+        ReAct.forward(
+          %Dsxir.Program.State{demos: []},
+          QASig,
+          %{question: "anything"},
+          tools: [calculator()],
+          max_iters: 1,
+          adapter: Dsxir.Adapter.Json
+        )
+
+      assert prediction.fields[:answer] == "ok"
+    end)
+  end
+
   test "trace records one entry per step under the outer predictor name" do
     responses = [
       scripted_response("compute", "calculator", %{expression: "2 + 2"}),

@@ -295,7 +295,7 @@ defmodule Dsxir.Optimizer.COPROTest do
         if is_binary(Map.get(fields, :answer)), do: 1.0, else: 0.0
       end
 
-      lm = {Dsxir.LM.Sycophant, [model: "openai:gpt-4o-mini"]}
+      lm = {Dsxir.LM.Sycophant, [model: "openai:gpt-5.4-mini"]}
 
       result =
         Dsxir.context([lm: lm], fn ->

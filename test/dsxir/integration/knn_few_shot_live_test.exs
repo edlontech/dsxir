@@ -47,7 +47,7 @@ defmodule Dsxir.Integration.KnnFewShotLiveTest do
 
     Dsxir.Settings.context(
       [
-        lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-4o-mini", api_key: key]},
+        lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-5.4-mini", api_key: key]},
         adapter: Dsxir.Adapter.Chat
       ],
       fn ->

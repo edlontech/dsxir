@@ -100,7 +100,7 @@ defmodule Dsxir.Predictor.ProgramOfThoughtTest do
   test "forward against real Sycophant on trivial arithmetic" do
     {%PState{}, pred} =
       Dsxir.Settings.context(
-        [lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-4o-mini"]}, cache: false],
+        [lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-5.4-mini"]}, cache: false],
         fn ->
           ProgramOfThought.forward(%PState{}, QA, %{question: "What is 6 times 7?"}, [])
         end

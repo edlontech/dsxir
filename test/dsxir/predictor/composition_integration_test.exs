@@ -137,7 +137,7 @@ defmodule Dsxir.Predictor.CompositionIntegrationTest do
       on_exit(fn -> :telemetry.detach(ref) end)
 
       Dsxir.Settings.context(
-        [lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-4o-mini", api_key: api_key]}],
+        [lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-5.4-mini", api_key: api_key]}],
         fn ->
           assert {%Program{}, %Prediction{}} =
                    BestOfN.run(
@@ -167,7 +167,7 @@ defmodule Dsxir.Predictor.CompositionIntegrationTest do
       on_exit(fn -> :telemetry.detach(ref) end)
 
       Dsxir.Settings.context(
-        [lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-4o-mini", api_key: api_key]}],
+        [lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-5.4-mini", api_key: api_key]}],
         fn ->
           assert {%Program{}, %Prediction{}} =
                    Refine.run(

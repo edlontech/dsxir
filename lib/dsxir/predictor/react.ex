@@ -216,7 +216,7 @@ defmodule Dsxir.Predictor.ReAct do
     next_tool_name = %Field{
       name: :next_tool_name,
       type: :string,
-      zoi: Zoi.string(),
+      zoi: Zoi.enum(Enum.map(tools, & &1.name) ++ ["finish"]),
       kind: :output,
       desc: ~s(One of the declared tool names, or "finish" to terminate.)
     }
@@ -224,7 +224,11 @@ defmodule Dsxir.Predictor.ReAct do
     next_tool_args = %Field{
       name: :next_tool_args,
       type: :map,
-      zoi: Zoi.any(),
+      zoi:
+        Zoi.union(
+          [Zoi.map(Zoi.any(), Zoi.any(), [])] ++
+            Enum.map(tools, & &1.parameters) ++ [Dsxir.Adapter.Json.output_schema(outer)]
+        ),
       kind: :output,
       desc: "Argument map for the chosen tool. Shape matches the tool's parameters."
     }

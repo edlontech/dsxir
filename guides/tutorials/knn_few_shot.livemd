@@ -41,7 +41,7 @@ embedder + strong generation model).
 
 ```elixir
 Dsxir.configure(
-  lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-4o-mini"]},
+  lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-5.4-mini"]},
   adapter: Dsxir.Adapter.Chat
 )
 ```
@@ -63,7 +63,7 @@ lm_frame = fn ->
   [
     lm:
       {Dsxir.LM.Sycophant,
-       [model: "openai:gpt-4o-mini", api_key: api_key, temperature: 0.0]}
+       [model: "openai:gpt-5.4-mini", api_key: api_key, temperature: 0.0]}
   ]
 end
 ```
@@ -897,7 +897,7 @@ end)
 If you ran the cells, you probably saw both optimizers score **100.0** on
 this four-example devset. That's not a bug — it's a ceiling effect:
 
-* `gpt-4o-mini` is strong enough to classify these four cleanly-separated
+* `gpt-5.4-mini` is strong enough to classify these four cleanly-separated
   tickets (one per category) even from a zero-shot prompt.
 * Four examples is too small a sample to surface the difference between
   KNN's per-call demos and LFS's static four.
