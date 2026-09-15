@@ -7,7 +7,7 @@ if Code.ensure_loaded?(Sycophant) do
 
     Config shape:
 
-        [model: "openai:gpt-4o-mini", api_key: nil | binary,
+        [model: "openai:gpt-5.4-mini", api_key: nil | binary,
          base_url: nil | binary, temperature: float, max_tokens: integer,
          top_p: float, num_retries: integer]
 

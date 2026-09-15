@@ -61,7 +61,7 @@ in the per-request context, never on disk. We use a
 
 ```elixir
 Dsxir.configure(
-  lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-4o-mini"]},
+  lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-5.4-mini"]},
   adapter: Dsxir.Adapter.Chat
 )
 ```
@@ -83,7 +83,7 @@ lm_frame = fn ->
   [
     lm:
       {Dsxir.LM.Sycophant,
-       [model: "openai:gpt-4o-mini", api_key: api_key, temperature: 0.2]}
+       [model: "openai:gpt-5.4-mini", api_key: api_key, temperature: 0.2]}
   ]
 end
 ```

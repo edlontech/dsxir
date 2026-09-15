@@ -170,7 +170,7 @@ defmodule Dsxir.Optimizer.GEPATest do
       }
     end
 
-    lm = {Dsxir.LM.Sycophant, [model: "openai:gpt-4o-mini"]}
+    lm = {Dsxir.LM.Sycophant, [model: "openai:gpt-5.4-mini"]}
 
     result =
       Dsxir.context([lm: lm], fn ->

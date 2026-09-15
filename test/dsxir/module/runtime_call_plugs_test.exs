@@ -20,7 +20,7 @@ defmodule Dsxir.Module.RuntimeCallPlugsTest do
 
     Dsxir.context(
       [
-        lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-4o-mini"]},
+        lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-5.4-mini"]},
         call_plugs: [plug_a, plug_b]
       ],
       fn ->
@@ -57,7 +57,7 @@ defmodule Dsxir.Module.RuntimeCallPlugsTest do
       assert_raise Dsxir.Errors.Halted.Plug, fn ->
         Dsxir.context(
           [
-            lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-4o-mini"]},
+            lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-5.4-mini"]},
             call_plugs: [halting]
           ],
           fn ->
@@ -79,7 +79,7 @@ defmodule Dsxir.Module.RuntimeCallPlugsTest do
       assert_raise Dsxir.Errors.Halted.Plug, fn ->
         Dsxir.context(
           [
-            lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-4o-mini"]},
+            lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-5.4-mini"]},
             call_plugs: [halting],
             metadata: %{tenant_id: "t1"}
           ],
@@ -97,7 +97,7 @@ defmodule Dsxir.Module.RuntimeCallPlugsTest do
     assert_raise Dsxir.Errors.Invalid.Configuration, fn ->
       Dsxir.context(
         [
-          lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-4o-mini"]},
+          lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-5.4-mini"]},
           call_plugs: [:not_a_function]
         ],
         fn ->

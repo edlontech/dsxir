@@ -31,7 +31,7 @@ defmodule Dsxir.Integration.MIPROv2LiveTest do
   @moduletag :integration
   @moduletag timeout: 600_000
 
-  @model "openai:gpt-4o-mini"
+  @model "openai:gpt-5.4-mini"
 
   setup_all do
     case System.get_env("OPENAI_API_KEY") do

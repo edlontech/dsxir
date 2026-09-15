@@ -10,7 +10,7 @@ defmodule Dsxir.IntegrationTest do
 
   @moduletag :integration
 
-  test "AnswerProgram answers a factual question via gpt-4o-mini" do
+  test "AnswerProgram answers a factual question via gpt-5.4-mini" do
     case System.get_env("OPENAI_API_KEY") do
       api_key when api_key in [nil, ""] ->
         IO.warn("skipping live test: OPENAI_API_KEY not set")
@@ -20,7 +20,7 @@ defmodule Dsxir.IntegrationTest do
           [
             lm:
               {Dsxir.LM.Sycophant,
-               [model: "openai:gpt-4o-mini", api_key: api_key, temperature: 0.0]}
+               [model: "openai:gpt-5.4-mini", api_key: api_key, temperature: 0.0]}
           ],
           fn ->
             prog = Dsxir.Program.new(AnswerProgram)

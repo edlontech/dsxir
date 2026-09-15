@@ -35,7 +35,7 @@ Kino input to keep the API key out of the notebook on disk.
 
 ```elixir
 Dsxir.configure(
-  lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-4o-mini"]},
+  lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-5.4-mini"]},
   adapter: Dsxir.Adapter.Chat
 )
 ```
@@ -55,7 +55,7 @@ lm_frame = fn ->
   api_key = Kino.Input.read(api_key_input)
 
   [lm: {Dsxir.LM.Sycophant,
-        [model: "openai:gpt-4o-mini", api_key: api_key, temperature: 0.0]}]
+        [model: "openai:gpt-5.4-mini", api_key: api_key, temperature: 0.0]}]
 end
 ```
 

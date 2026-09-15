@@ -526,7 +526,7 @@ defmodule Dsxir.Predictor.PredictTest do
       stream = fn %Dsxir.Stream.Event{} = event -> send(parent, {ref, event.type, event.data}) end
 
       Dsxir.Settings.context(
-        [lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-4o-mini"]}],
+        [lm: {Dsxir.LM.Sycophant, [model: "openai:gpt-5.4-mini"]}],
         fn ->
           {%Dsxir.Program.State{}, prediction} =
             Predict.forward(

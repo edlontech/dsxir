@@ -7,13 +7,13 @@ defmodule Dsxir.LM.SycophantTest do
   setup :set_mimic_from_context
 
   test "generate_text/3 returns the response text on success" do
-    expect(Sycophant, :generate_text, fn "openai:gpt-4o-mini", _msgs, _opts ->
+    expect(Sycophant, :generate_text, fn "openai:gpt-5.4-mini", _msgs, _opts ->
       {:ok, %Sycophant.Response{text: "hello", context: %Sycophant.Context{messages: []}}}
     end)
 
     assert {:ok, "hello", %Dsxir.Cost{}} =
              Impl.generate_text(
-               [model: "openai:gpt-4o-mini"],
+               [model: "openai:gpt-5.4-mini"],
                [Sycophant.Message.user("hi")],
                []
              )
@@ -368,7 +368,7 @@ defmodule Dsxir.LM.SycophantTest do
 
     assert {:ok, "ok", _usage} =
              Impl.generate_text(
-               [model: "openai:gpt-4o-mini"],
+               [model: "openai:gpt-5.4-mini"],
                [],
                cache: false,
                _dsxir_nonce: 42,
@@ -380,7 +380,7 @@ defmodule Dsxir.LM.SycophantTest do
     test "returns {:ok, object, usage} on success" do
       usage = %Sycophant.Usage{input_tokens: 7, output_tokens: 11, total_cost: 0.0002}
 
-      expect(Sycophant, :generate_object, fn "openai:gpt-4o-mini", _msgs, _schema, _opts ->
+      expect(Sycophant, :generate_object, fn "openai:gpt-5.4-mini", _msgs, _schema, _opts ->
         {:ok,
          %Sycophant.Response{
            text: nil,
@@ -395,7 +395,7 @@ defmodule Dsxir.LM.SycophantTest do
       assert {:ok, %{"answer" => "42"},
               %Dsxir.Cost{input_tokens: 7, output_tokens: 11, total_cost: 0.0002, calls: 1}} =
                Impl.generate_object(
-                 [model: "openai:gpt-4o-mini"],
+                 [model: "openai:gpt-5.4-mini"],
                  [Sycophant.Message.user("hi")],
                  schema,
                  []
@@ -499,7 +499,7 @@ defmodule Dsxir.LM.SycophantTest do
               %Dsxir.Cost{input_tokens: 2, output_tokens: 0, total_cost: +0.0, calls: 1}} =
                Impl.embed(
                  [
-                   model: "openai:gpt-4o-mini",
+                   model: "openai:gpt-5.4-mini",
                    embedding_model: "openai:text-embedding-3-small"
                  ],
                  ["a", "b"],
@@ -525,7 +525,7 @@ defmodule Dsxir.LM.SycophantTest do
     end
 
     test "falls back to config :model when no :embedding_model is set" do
-      expect(Sycophant, :embed, fn %Sycophant.EmbeddingRequest{model: "openai:gpt-4o-mini"},
+      expect(Sycophant, :embed, fn %Sycophant.EmbeddingRequest{model: "openai:gpt-5.4-mini"},
                                    _opts ->
         {:ok,
          %Sycophant.EmbeddingResponse{
@@ -535,7 +535,7 @@ defmodule Dsxir.LM.SycophantTest do
       end)
 
       assert {:ok, [[0.5]], _usage} =
-               Impl.embed([model: "openai:gpt-4o-mini"], ["a"], [])
+               Impl.embed([model: "openai:gpt-5.4-mini"], ["a"], [])
     end
 
     test "drops :embedding_model from sycophant opts" do
