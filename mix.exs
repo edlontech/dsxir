@@ -4,7 +4,7 @@ defmodule Dsxir.MixProject do
   def project do
     [
       app: :dsxir,
-      version: "0.6.0-rc",
+      version: "0.6.0-rc.1",
       elixir: "~> 1.19",
       description: description(),
       package: package(),
