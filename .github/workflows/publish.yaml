@@ -34,20 +34,18 @@ jobs:
   publish:
     needs: [release-please]
     if: ${{ needs.release-please.outputs.release_created }}
-    strategy:
-      matrix:
-        elixir: ["1.20.2"]
-        otp: ["29.0"]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
       - name: Set up Elixir
-        uses: erlef/setup-beam@v1
-        with:
-          elixir-version: ${{ matrix.elixir }}
-          otp-version: ${{ matrix.otp }}
+        uses: jdx/mise-action@v5
+
+      - name: Install Hex and Rebar
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
 
       - name: Restore deps and _build cache
         uses: actions/cache@v5
@@ -55,8 +53,8 @@ jobs:
           path: |
             deps
             _build
-          key: ${{ runner.os }}-${{ matrix.otp }}-${{ matrix.elixir }}-mix-${{ hashFiles('**/mix.lock') }}
-          restore-keys: ${{ runner.os }}-${{ matrix.otp }}-${{ matrix.elixir }}-mix-
+          key: ${{ runner.os }}-${{ hashFiles('mise.toml') }}-mix-${{ hashFiles('**/mix.lock') }}
+          restore-keys: ${{ runner.os }}-${{ hashFiles('mise.toml') }}-mix-
 
       - name: Fetch and Compile Dependencies
         run: |
