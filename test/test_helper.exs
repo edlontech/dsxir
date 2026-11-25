@@ -1,4 +1,6 @@
 ExUnit.start(exclude: [:integration])
 Mimic.copy(Sycophant)
 Mimic.copy(Dsxir.LM.Sycophant)
+Mimic.copy(ReqLLM)
+Mimic.copy(ReqLLM.StreamResponse)
 Mimic.copy(File)

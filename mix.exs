@@ -140,7 +140,7 @@ defmodule Dsxir.MixProject do
           Dsxir.Primitives.Tool,
           Dsxir.Primitives.History
         ],
-        LM: [Dsxir.LM, Dsxir.LM.Sycophant],
+        LM: [Dsxir.LM, Dsxir.LM.Sycophant, Dsxir.LM.ReqLLM],
         Telemetry: [Dsxir.Telemetry, Dsxir.History],
         Errors: [
           Dsxir.Errors,
@@ -185,6 +185,7 @@ defmodule Dsxir.MixProject do
       {:quiver, "~> 0.2"},
       {:stream_data, "~> 1.1", only: :test},
       {:recode, "~> 0.8", only: [:dev], runtime: false},
+      {:req_llm, "~> 1.31", optional: true},
       {:spark, "~> 2.7"},
       {:sycophant, "~> 0.4", optional: true},
       {:tidewave, "~> 0.5", only: :dev, runtime: false},

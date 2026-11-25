@@ -242,8 +242,8 @@ usage.
 
 LM impls implement the `Dsxir.LM` behaviour (`generate_text/3`, optional
 `generate_object/4` and `embed/3`). Predictors/adapters dispatch through it and
-never touch a provider SDK. `Dsxir.LM.Sycophant` is the shipped real
-implementation (optional dependency). In tests, stub LM callbacks with `mimic`
+never touch a provider SDK. `Dsxir.LM.Sycophant` and `Dsxir.LM.ReqLLM` are
+the shipped real implementations (each behind its optional dependency). In tests, stub LM callbacks with `mimic`
 rather than building bespoke fakes.
 
 ## Tracing
